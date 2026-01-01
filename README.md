@@ -133,6 +133,7 @@ stack test
 ## Documentation
 
 - [Implementation Notes](docs/IMPLEMENTATION-NOTES.md) - Detailed notes on challenges and solutions, including comparison with other backends (JavaScript, Erlang, Lua)
+- [Roadmap](docs/ROADMAP.md) - Performance optimizations, FFI improvements, and future direction
 
 ## Credits
 
