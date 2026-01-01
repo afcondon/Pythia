@@ -35,6 +35,14 @@ printStmt = case _ of
   PyReturn expr ->
     D.text "return" <+> printExpr expr
 
+  PyReturnNothing ->
+    D.text "return"
+
+  PyMultiAssign names exprs ->
+    D.text (String.joinWith ", " (map (unwrap >>> identity) names)) <+>
+    D.text "=" <+>
+    D.text (String.joinWith ", " (map printExprToString exprs))
+
   PyIf cond thenBlock elseBlock ->
     D.lines
       [ D.text "if" <+> printExpr cond <> D.text ":"
@@ -86,6 +94,12 @@ printStmt = case _ of
 
   PyPass ->
     D.text "pass"
+
+  PyContinue ->
+    D.text "continue"
+
+  PyBreak ->
+    D.text "break"
 
   PyComment text ->
     D.text "#" <+> D.text text

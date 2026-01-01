@@ -4,6 +4,7 @@ module PureScript.Backend.Python.Builder where
 import Prelude
 
 import Data.Array as Array
+import Data.Maybe (Maybe(..))
 import Data.String as String
 import Data.Tuple (Tuple(..))
 import Effect.Aff (Aff)
@@ -15,6 +16,7 @@ import PureScript.Backend.Optimizer.Convert (BackendModule)
 import PureScript.Backend.Optimizer.CoreFn (Ident(..), ModuleName(..))
 import PureScript.Backend.Optimizer.Semantics (NeutralExpr)
 import PureScript.Backend.Python.Convert (CodegenContext, codegenExpr, sanitizeIdent, toPyModuleName)
+import PureScript.Backend.Python.Tco as Tco
 import PureScript.Backend.Python.Printer (escapeString)
 import PureScript.Backend.Python.Syntax as Py
 
@@ -24,19 +26,32 @@ type PythonBuildOptions =
   }
 
 -- | Generate Python code for a single binding
-codegenBinding :: CodegenContext -> Tuple Ident NeutralExpr -> String
-codegenBinding ctx (Tuple (Ident name) expr) =
-  sanitizeIdent name <> " = " <> printExpr (codegenExpr ctx expr)
+-- | Checks if the binding is TCO-eligible and generates optimized code if so
+codegenBinding :: ModuleName -> CodegenContext -> Tuple Ident NeutralExpr -> String
+codegenBinding modName ctx (Tuple ident@(Ident name) expr) =
+  case Tco.analyzeTco modName ident expr of
+    Tco.TcoLoop { args, body } ->
+      -- Generate TCO-optimized function definition
+      let stmts = Tco.codegenTcoFunction ctx ident args body
+      in String.joinWith "\n" (map (printStmt 0) stmts)
+    Tco.NotTco _ ->
+      -- Generate regular assignment
+      sanitizeIdent name <> " = " <> printExpr (codegenExpr ctx expr)
 
 -- | Generate Python code for a binding group
-codegenBindingGroup :: CodegenContext -> { recursive :: Boolean, bindings :: Array (Tuple Ident NeutralExpr) } -> String
-codegenBindingGroup ctx { recursive: false, bindings } =
-  String.joinWith "\n" (map (codegenBinding ctx) bindings)
-codegenBindingGroup ctx { recursive: true, bindings } =
+codegenBindingGroup :: ModuleName -> CodegenContext -> { recursive :: Boolean, bindings :: Array (Tuple Ident NeutralExpr) } -> String
+codegenBindingGroup modName ctx { recursive: false, bindings } =
+  String.joinWith "\n" (map (codegenBinding modName ctx) bindings)
+codegenBindingGroup modName ctx { recursive: true, bindings } =
   -- For recursive bindings, we need to define all names first, then assign
-  let names = map (\(Tuple (Ident n) _) -> sanitizeIdent n) bindings
+  -- Skip forward declarations for TCO functions (they're defined with def, not assignment)
+  let isTcoBinding (Tuple ident expr) = case Tco.analyzeTco modName ident expr of
+        Tco.TcoLoop _ -> true
+        Tco.NotTco _ -> false
+      nonTcoBindings = Array.filter (not <<< isTcoBinding) bindings
+      names = map (\(Tuple (Ident n) _) -> sanitizeIdent n) nonTcoBindings
       forwardDecls = map (\n -> n <> " = None  # forward declaration") names
-      assigns = map (codegenBinding ctx) bindings
+      assigns = map (codegenBinding modName ctx) bindings
   in String.joinWith "\n" (forwardDecls <> assigns)
 
 -- | Generate a complete Python module from a BackendModule
@@ -52,7 +67,7 @@ codegenModule mod =
       ) imports
 
       -- Generate bindings
-      bindingLines = map (codegenBindingGroup ctx) mod.bindings
+      bindingLines = map (codegenBindingGroup mod.name ctx) mod.bindings
 
       -- Generate exports (as __all__)
       exports = Array.fromFoldable mod.exports
@@ -316,3 +331,66 @@ printExpr = case _ of
       _ -> "(" <> String.joinWith ", " (map printExpr items) <> ")"
   Py.PyWalrus (Py.PyIdent name) expr ->
     "(" <> name <> " := " <> printExpr expr <> ")"
+
+-- | Print a statement with given indentation
+printStmt :: Int -> Py.PyStmt -> String
+printStmt indent stmt =
+  let ind = String.joinWith "" (Array.replicate indent "    ")
+  in ind <> printStmtInner indent stmt
+
+-- | Print statement content (without leading indent)
+printStmtInner :: Int -> Py.PyStmt -> String
+printStmtInner indent = case _ of
+  Py.PyAssign (Py.PyIdent name) expr ->
+    name <> " = " <> printExpr expr
+  Py.PyMultiAssign names exprs ->
+    String.joinWith ", " (map (\(Py.PyIdent n) -> n) names) <>
+    " = " <>
+    String.joinWith ", " (map printExpr exprs)
+  Py.PyExprStmt expr ->
+    printExpr expr
+  Py.PyReturn expr ->
+    "return " <> printExpr expr
+  Py.PyReturnNothing ->
+    "return"
+  Py.PyIf cond thenStmts elseStmts ->
+    "if " <> printExpr cond <> ":\n" <>
+    printBlock (indent + 1) thenStmts <>
+    case elseStmts of
+      Nothing -> ""
+      Just stmts -> "\n" <> String.joinWith "" (Array.replicate indent "    ") <> "else:\n" <>
+        printBlock (indent + 1) stmts
+  Py.PyWhile cond body ->
+    "while " <> printExpr cond <> ":\n" <>
+    printBlock (indent + 1) body
+  Py.PyFor (Py.PyIdent var) iter body ->
+    "for " <> var <> " in " <> printExpr iter <> ":\n" <>
+    printBlock (indent + 1) body
+  Py.PyDef (Py.PyIdent name) args body ->
+    "def " <> name <> "(" <> String.joinWith ", " (map (\(Py.PyIdent a) -> a) args) <> "):\n" <>
+    printBlock (indent + 1) body
+  Py.PyClass (Py.PyIdent name) parent body ->
+    "class " <> name <>
+    (case parent of
+      Nothing -> ""
+      Just (Py.PyIdent p) -> "(" <> p <> ")") <>
+    ":\n" <> printBlock (indent + 1) body
+  Py.PyImport mod ->
+    "import " <> mod
+  Py.PyFromImport mod names ->
+    "from " <> mod <> " import " <> String.joinWith ", " names
+  Py.PyPass ->
+    "pass"
+  Py.PyContinue ->
+    "continue"
+  Py.PyBreak ->
+    "break"
+  Py.PyComment text ->
+    "# " <> text
+
+-- | Print a block of statements
+printBlock :: Int -> Array Py.PyStmt -> String
+printBlock indent stmts =
+  case stmts of
+    [] -> String.joinWith "" (Array.replicate indent "    ") <> "pass"
+    _ -> String.joinWith "\n" (map (printStmt indent) stmts)

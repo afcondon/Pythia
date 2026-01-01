@@ -42,8 +42,10 @@ derive instance Eq PyExpr
 -- | Python statement
 data PyStmt
   = PyAssign PyIdent PyExpr
+  | PyMultiAssign (Array PyIdent) (Array PyExpr)  -- simultaneous assignment: a, b = x, y
   | PyExprStmt PyExpr
   | PyReturn PyExpr
+  | PyReturnNothing  -- return without value (for TCO loops)
   | PyIf PyExpr (Array PyStmt) (Maybe (Array PyStmt))
   | PyWhile PyExpr (Array PyStmt)
   | PyFor PyIdent PyExpr (Array PyStmt)
@@ -52,6 +54,8 @@ data PyStmt
   | PyImport String
   | PyFromImport String (Array String)
   | PyPass
+  | PyContinue  -- continue statement for TCO loops
+  | PyBreak     -- break statement
   | PyComment String
 
 derive instance Eq PyStmt
