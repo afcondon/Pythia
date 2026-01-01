@@ -1,0 +1,92 @@
+name: purescript-python
+version: "0.0.1"
+synopsis: PureScript Programming Language Python Back-end
+description:
+  Python backend for PureScript (a small strongly, statically typed programming language with expressive
+  types, inspired by Haskell).
+category: Language
+author: Your Name
+copyright: (c) 2025 Your Name
+license: BSD3
+github: your-username/purescript-python
+extra-source-files:
+  - stack.yaml
+  - README.md
+dependencies:
+  - aeson
+  - base
+  - containers
+  - directory
+  - filepath
+  - Glob
+  - mtl
+  - purescript
+  - text
+  - transformers
+build-tools:
+  - happy:happy ==1.20.0
+
+library:
+  source-dirs: src
+  ghc-options: -Wall -O2
+
+executables:
+  purepy:
+    main: Main.hs
+    source-dirs: app
+    ghc-options: -Wall -O2 -fno-warn-unused-do-bind -threaded -rtsopts -with-rtsopts=-N
+    dependencies:
+      - ansi-wl-pprint
+      - optparse-applicative
+      - purescript-python
+    when:
+      - condition: flag(release)
+        then:
+          cpp-options: -DRELEASE
+        else:
+          dependencies:
+            - gitrev >=1.2.0 && <1.4
+
+tests:
+  tests:
+    main: Main.hs
+    source-dirs:
+      - tests
+    dependencies:
+      - purescript-python
+      - hspec
+    build-tools:
+      - hspec-discover
+
+default-extensions:
+  - ConstraintKinds
+  - DataKinds
+  - DeriveFunctor
+  - DeriveFoldable
+  - DeriveTraversable
+  - DeriveGeneric
+  - DerivingStrategies
+  - EmptyDataDecls
+  - FlexibleContexts
+  - KindSignatures
+  - LambdaCase
+  - MultiParamTypeClasses
+  - NoImplicitPrelude
+  - PatternGuards
+  - PatternSynonyms
+  - RankNTypes
+  - RecordWildCards
+  - OverloadedStrings
+  - ScopedTypeVariables
+  - TupleSections
+  - ViewPatterns
+
+flags:
+  release:
+    description: >
+      Mark this build as a release build: prevents inclusion of extra
+      info e.g. commit SHA in --version output)
+    manual: false
+    default: false
+
+stability: experimental

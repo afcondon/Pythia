@@ -1,0 +1,36 @@
+# Stack
+.stack-work/
+stack.yaml.lock
+
+# Cabal
+dist/
+dist-newstyle/
+cabal.sandbox.config
+*.cabal
+.cabal-sandbox/
+
+# Haskell
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
+
+# Output
+output/
+output-py/
+
+# PureScript/Spago
+.spago/
+.purs-repl
+spago.lock
+
+# OS
+.DS_Store
+Thumbs.db

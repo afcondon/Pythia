@@ -1,0 +1,10 @@
+package:
+  name: test-hello
+  dependencies:
+    - console
+    - effect
+    - prelude
+workspace:
+  packageSet:
+    registry: 57.1.0
+  extraPackages: {}
