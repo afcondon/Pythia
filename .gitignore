@@ -34,3 +34,4 @@ spago.lock
 # OS
 .DS_Store
 Thumbs.db
+test-project/output-py-new/
