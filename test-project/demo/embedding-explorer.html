@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UMAP Embedding Explorer - PurePy Demo</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            color: #e0e0e0;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            background: linear-gradient(90deg, #00d4ff, #7b2ff7, #f107a3);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #888;
+            font-size: 1.1rem;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 250px;
+            gap: 20px;
+        }
+
+        .chart-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .legend-container, .info-container {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .legend-title, .info-title {
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+            margin-bottom: 15px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .legend-item:hover {
+            opacity: 0.8;
+        }
+
+        .legend-item.dimmed {
+            opacity: 0.3;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+        }
+
+        .legend-label {
+            font-size: 0.95rem;
+            text-transform: capitalize;
+        }
+
+        .legend-count {
+            margin-left: auto;
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        #scatter-plot {
+            width: 100%;
+            height: 600px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .tooltip .word {
+            font-size: 18px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+
+        .tooltip .category {
+            color: #aaa;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 400px;
+            color: #888;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #00d4ff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .stat:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            color: #888;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: #00d4ff;
+        }
+
+        .tech-badge {
+            display: inline-block;
+            background: rgba(123, 47, 247, 0.2);
+            color: #b794f6;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            margin: 5px 5px 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🗺️ UMAP Embedding Explorer</h1>
+            <p class="subtitle">
+                High-dimensional word embeddings projected to 2D using Python's UMAP
+            </p>
+            <div style="margin-top: 15px;">
+                <span class="tech-badge">PureScript</span>
+                <span class="tech-badge">Python</span>
+                <span class="tech-badge">UMAP</span>
+                <span class="tech-badge">D3.js</span>
+            </div>
+        </header>
+
+        <div class="main-content">
+            <div class="chart-container">
+                <div id="scatter-plot">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Running UMAP projection...</p>
+                        <p style="font-size: 12px; margin-top: 5px; color: #666;">
+                            (This may take a few seconds on first load)
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sidebar">
+                <div class="legend-container">
+                    <div class="legend-title">Categories</div>
+                    <div id="legend"></div>
+                </div>
+
+                <div class="info-container">
+                    <div class="info-title">Statistics</div>
+                    <div id="stats">
+                        <div class="stat">
+                            <span class="stat-label">Words</span>
+                            <span class="stat-value" id="stat-words">-</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Categories</span>
+                            <span class="stat-value" id="stat-categories">-</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Dimensions</span>
+                            <span class="stat-value" id="stat-dims">50 → 2</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Metric</span>
+                            <span class="stat-value" id="stat-metric">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="info-container">
+                    <div class="info-title">About</div>
+                    <p style="font-size: 0.85rem; line-height: 1.6; color: #aaa;">
+                        UMAP (Uniform Manifold Approximation and Projection) reveals the hidden
+                        structure in high-dimensional data. Words with similar meanings cluster together.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // Color palette for categories
+        const categoryColors = {
+            'animals': '#ff6b6b',
+            'colors': '#4ecdc4',
+            'countries': '#45b7d1',
+            'food': '#f9ca24',
+            'sports': '#6c5ce7',
+            'emotions': '#fd79a8',
+            'professions': '#00b894'
+        };
+
+        let activeCategories = new Set();
+        let allData = [];
+
+        async function fetchEmbeddings() {
+            try {
+                const response = await fetch('http://localhost:8081/api/embeddings');
+                const data = await response.json();
+
+                if (data.success) {
+                    return data.data;
+                } else {
+                    throw new Error(data.error || 'Failed to fetch embeddings');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('scatter-plot').innerHTML = `
+                    <div class="loading" style="color: #ff6b6b;">
+                        <p>Failed to connect to server</p>
+                        <p style="font-size: 12px; margin-top: 10px;">
+                            Make sure the PurePy server is running on port 8081
+                        </p>
+                    </div>
+                `;
+                throw error;
+            }
+        }
+
+        function renderLegend(categories) {
+            const legend = document.getElementById('legend');
+            legend.innerHTML = '';
+
+            // Count words per category
+            const counts = {};
+            allData.forEach(d => {
+                counts[d.category] = (counts[d.category] || 0) + 1;
+            });
+
+            categories.forEach(cat => {
+                activeCategories.add(cat);
+
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                item.innerHTML = `
+                    <div class="legend-color" style="background: ${categoryColors[cat] || '#999'}"></div>
+                    <span class="legend-label">${cat}</span>
+                    <span class="legend-count">${counts[cat] || 0}</span>
+                `;
+
+                item.addEventListener('click', () => {
+                    if (activeCategories.has(cat)) {
+                        activeCategories.delete(cat);
+                        item.classList.add('dimmed');
+                    } else {
+                        activeCategories.add(cat);
+                        item.classList.remove('dimmed');
+                    }
+                    updatePointVisibility();
+                });
+
+                legend.appendChild(item);
+            });
+        }
+
+        function updatePointVisibility() {
+            d3.selectAll('.point')
+                .transition()
+                .duration(300)
+                .style('opacity', d => activeCategories.has(d.category) ? 0.85 : 0.1)
+                .attr('r', d => activeCategories.has(d.category) ? 8 : 4);
+        }
+
+        function renderScatterPlot(points) {
+            const container = document.getElementById('scatter-plot');
+            container.innerHTML = '';
+
+            const margin = { top: 40, right: 40, bottom: 40, left: 40 };
+            const width = container.clientWidth - margin.left - margin.right;
+            const height = 600 - margin.top - margin.bottom;
+
+            // Calculate extent with padding
+            const xExtent = d3.extent(points, d => d.x);
+            const yExtent = d3.extent(points, d => d.y);
+            const xPadding = (xExtent[1] - xExtent[0]) * 0.1;
+            const yPadding = (yExtent[1] - yExtent[0]) * 0.1;
+
+            const xScale = d3.scaleLinear()
+                .domain([xExtent[0] - xPadding, xExtent[1] + xPadding])
+                .range([0, width]);
+
+            const yScale = d3.scaleLinear()
+                .domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
+                .range([height, 0]);
+
+            const svg = d3.select(container)
+                .append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            // Add subtle grid
+            svg.append('g')
+                .attr('class', 'grid')
+                .selectAll('line.horizontal')
+                .data(yScale.ticks(10))
+                .enter()
+                .append('line')
+                .attr('x1', 0)
+                .attr('x2', width)
+                .attr('y1', d => yScale(d))
+                .attr('y2', d => yScale(d))
+                .attr('stroke', 'rgba(255,255,255,0.05)')
+                .attr('stroke-dasharray', '2,2');
+
+            svg.append('g')
+                .attr('class', 'grid')
+                .selectAll('line.vertical')
+                .data(xScale.ticks(10))
+                .enter()
+                .append('line')
+                .attr('x1', d => xScale(d))
+                .attr('x2', d => xScale(d))
+                .attr('y1', 0)
+                .attr('y2', height)
+                .attr('stroke', 'rgba(255,255,255,0.05)')
+                .attr('stroke-dasharray', '2,2');
+
+            const tooltip = d3.select('#tooltip');
+
+            // Add points with animation
+            svg.selectAll('.point')
+                .data(points)
+                .enter()
+                .append('circle')
+                .attr('class', 'point')
+                .attr('cx', d => xScale(d.x))
+                .attr('cy', d => yScale(d.y))
+                .attr('r', 0)
+                .attr('fill', d => categoryColors[d.category] || '#999')
+                .style('opacity', 0)
+                .style('cursor', 'pointer')
+                .on('mouseover', function(event, d) {
+                    d3.select(this)
+                        .transition()
+                        .duration(150)
+                        .attr('r', 14)
+                        .style('opacity', 1);
+
+                    tooltip
+                        .style('opacity', 1)
+                        .style('left', (event.pageX + 15) + 'px')
+                        .style('top', (event.pageY - 10) + 'px')
+                        .html(`
+                            <div class="word">${d.label}</div>
+                            <div class="category">${d.category}</div>
+                        `);
+                })
+                .on('mouseout', function(event, d) {
+                    const isActive = activeCategories.has(d.category);
+                    d3.select(this)
+                        .transition()
+                        .duration(150)
+                        .attr('r', isActive ? 8 : 4)
+                        .style('opacity', isActive ? 0.85 : 0.1);
+
+                    tooltip.style('opacity', 0);
+                })
+                .transition()
+                .delay((d, i) => i * 5)
+                .duration(500)
+                .attr('r', 8)
+                .style('opacity', 0.85);
+        }
+
+        async function init() {
+            try {
+                const data = await fetchEmbeddings();
+                allData = data.points;
+
+                // Update stats
+                document.getElementById('stat-words').textContent = data.points.length;
+                document.getElementById('stat-categories').textContent = data.categories.length;
+                document.getElementById('stat-metric').textContent = data.config.metric;
+
+                // Render
+                renderLegend(data.categories);
+                renderScatterPlot(data.points);
+
+            } catch (error) {
+                console.error('Failed to initialize:', error);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
