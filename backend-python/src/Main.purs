@@ -23,6 +23,8 @@ import PureScript.Backend.Optimizer.Builder (buildModules)
 import PureScript.Backend.Optimizer.CoreFn (Ann, Module(..))
 import PureScript.Backend.Optimizer.CoreFn.Json (decodeModule)
 import PureScript.Backend.Optimizer.CoreFn.Sort (sortModules)
+import PureScript.Backend.Optimizer.Directives (parseDirectiveFile)
+import PureScript.Backend.Optimizer.Directives.Defaults (defaultDirectives)
 import PureScript.Backend.Python.Builder (generateRuntime, processModule)
 
 -- | Main entry point
@@ -68,11 +70,21 @@ compile opts = do
 
       Console.log "Running optimizer and generating Python..."
 
+      -- Parse directives (defaults + Python-specific)
+      let pythonDirectives = defaultDirectives <> """
+        -- Python backend: prevent inlining of tailRec so we can recognize it
+        Control.Monad.Rec.Class.tailRec never
+        Control.Monad.Rec.Class.tailRecM never
+        Control.Monad.Rec.Class.tailRec2 never
+        Control.Monad.Rec.Class.tailRec3 never
+        """
+      let { directives } = parseDirectiveFile pythonDirectives
+
       -- Use the optimizer's buildModules
       let pyOpts = { outputDir: opts.outputDir, inputDir: opts.inputDir }
       sortedModules # buildModules
         { analyzeCustom: \_ _ -> Nothing  -- No custom analysis
-        , directives: Map.empty           -- No custom directives
+        , directives                      -- Use our custom directives
         , foreignSemantics: Map.empty     -- No custom foreign semantics
         , onCodegenModule: \_ coreFnMod backendMod _ ->
             let Module { path } = coreFnMod

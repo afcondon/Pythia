@@ -102,12 +102,12 @@ codegenExpr ctx (NeutralExpr expr) = case expr of
     foldl (\acc arg -> Py.PyApp acc [codegenExpr ctx arg]) (codegenExpr ctx fn) (NonEmptyArray.toArray args)
 
   -- Let binding: Let (Maybe Ident) Level value body
-  Let mbIdent lvl val body ->
+  Let _mbIdent lvl val body ->
     -- Use Python's walrus operator in a lambda-immediately-invoked pattern
     -- (lambda: ((x := val), body)[-1])()
-    let varName = case mbIdent of
-          Just ident -> toPyIdent ident
-          Nothing -> localIdent lvl 0
+    -- IMPORTANT: Always use localIdent for the binding name, because Local references
+    -- use localIdent. The mbIdent is just for debugging, Level is what matters.
+    let varName = localIdent lvl 0
         binding = Py.PyWalrus varName (codegenExpr ctx val)
         bodyExpr = codegenExpr ctx body
     in Py.PyCall
@@ -118,10 +118,13 @@ codegenExpr ctx (NeutralExpr expr) = case expr of
         []
 
   -- Recursive let bindings: LetRec Level (NonEmptyArray (Tuple Ident value)) body
-  LetRec _ bindings body ->
-    -- For now, use the same pattern as Let but with multiple bindings
-    let bindingExprs = map (\(Tuple ident val) ->
-          Py.PyWalrus (toPyIdent ident) (codegenExpr ctx val)) (NonEmptyArray.toArray bindings)
+  -- IMPORTANT: Must use localIdent (not toPyIdent) so binding names match Local references
+  -- Local references use localIdent to generate names like _v4_0, so we must do the same here
+  LetRec lvl bindings body ->
+    -- Use localIdent for consistency with how Local references are generated
+    -- For multiple bindings sharing the same Level, we append the index
+    let bindingExprs = Array.mapWithIndex (\idx (Tuple _ident val) ->
+          Py.PyWalrus (localIdent lvl idx) (codegenExpr ctx val)) (NonEmptyArray.toArray bindings)
         bodyExpr = codegenExpr ctx body
     in Py.PyCall
         (Py.PyLambda []
@@ -138,17 +141,19 @@ codegenExpr ctx (NeutralExpr expr) = case expr of
       Py.PyTernary (codegenExpr ctx cond) (codegenExpr ctx body) rest
 
   -- Constructor definition: CtorDef ConstructorType ProperName Ident (Array String)
-  -- Generates a function that creates a tagged tuple
+  -- Generates a curried function that creates a tagged tuple
   CtorDef _ctorType _typeName (Ident ctorName) fields ->
     case Array.length fields of
       0 ->
         -- No-arg constructor: just a tuple with the tag
         Py.PyTuple [Py.pyString ctorName]
       _ ->
-        -- Constructor with fields: lambda that returns tagged tuple
+        -- Constructor with fields: curried lambda that returns tagged tuple
+        -- Each field becomes a nested lambda: lambda _0: lambda _1: ... ("Tag", _0, _1, ...)
         let params = Array.mapWithIndex (\i _ -> Py.PyIdent ("_" <> show i)) fields
             fieldExprs = Array.mapWithIndex (\i _ -> Py.pyVar ("_" <> show i)) fields
-        in Py.PyLambda params (Py.PyTuple (Array.cons (Py.pyString ctorName) fieldExprs))
+            body = Py.PyTuple (Array.cons (Py.pyString ctorName) fieldExprs)
+        in foldr (\param inner -> Py.PyLambda [param] inner) body params
 
   -- Constructor (saturated): CtorSaturated (Qualified Ident) ConstructorType ProperName Ident (Array (Tuple String a))
   -- The Ident (4th arg) is the constructor name, ProperName (3rd arg) is the type name
@@ -177,11 +182,10 @@ codegenExpr ctx (NeutralExpr expr) = case expr of
     codegenPrimOp ctx op
 
   -- Effect operations: EffectBind (Maybe Ident) Level effect body
-  EffectBind mbIdent lvl eff body ->
+  EffectBind _mbIdent lvl eff body ->
     -- Effectful code: (lambda: ((x := eff()), body())[-1])()
-    let varName = case mbIdent of
-          Just ident -> toPyIdent ident
-          Nothing -> localIdent lvl 0
+    -- IMPORTANT: Always use localIdent for consistency with Local references
+    let varName = localIdent lvl 0
         effCall = Py.PyCall (codegenExpr ctx eff) []
         binding = Py.PyWalrus varName effCall
         bodyExpr = Py.PyCall (codegenExpr ctx body) []
