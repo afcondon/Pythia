@@ -63,6 +63,58 @@ codegenBindingGroup modName ctx { recursive: true, bindings } =
 pyForeignModuleName :: ModuleName -> String
 pyForeignModuleName modName = toPyModuleName modName <> "_foreign"
 
+-- | Set of foreign function names that are provided by the Python runtime
+-- | These don't need to be imported from _foreign modules
+runtimeProvidedForeign :: Set.Set String
+runtimeProvidedForeign = Set.fromFoldable
+  [ -- Data.Unit
+    "unit"
+  -- Data.Semiring
+  , "intAdd", "intMul", "numAdd", "numMul"
+  -- Data.Ring
+  , "intSub", "numSub"
+  -- Data.EuclideanRing
+  , "intDiv", "intMod", "numDiv"
+  -- Data.Eq
+  , "eqBooleanImpl", "eqIntImpl", "eqNumberImpl", "eqCharImpl", "eqStringImpl", "eqArrayImpl"
+  -- Data.Ord
+  , "ordBooleanImpl", "ordIntImpl", "ordNumberImpl", "ordCharImpl", "ordStringImpl", "ordArrayImpl"
+  -- Data.HeytingAlgebra
+  , "boolConj", "boolDisj", "boolNot"
+  -- Data.Bounded
+  , "topInt", "bottomInt", "topChar", "bottomChar", "topNumber", "bottomNumber"
+  -- Data.Show
+  , "showIntImpl", "showNumberImpl", "showCharImpl", "showStringImpl", "showArrayImpl"
+  -- Data.Semigroup
+  , "concatString", "concatArray"
+  -- Data.Array
+  , "indexImpl", "length", "concat", "filter", "reverse", "sortByImpl", "slice"
+  , "range", "replicate", "zipWith", "take", "drop", "cons", "snoc", "uncons"
+  -- Data.Foldable
+  , "foldlArray", "foldrArray"
+  -- Data.Functor
+  , "arrayMap"
+  -- Control.Bind
+  , "arrayBind"
+  -- Control.Apply
+  , "arrayApply"
+  -- Record.Unsafe
+  , "unsafeGet", "unsafeSet", "unsafeHas", "unsafeDelete"
+  -- Unsafe.Coerce
+  , "unsafeCoerce"
+  -- Effect
+  , "pureE", "bindE", "untilE", "whileE", "forE", "foreachE"
+  -- Effect.Ref
+  , "new", "read", "modify'", "write"
+  -- Effect.Unsafe
+  , "unsafePerformEffect"
+  -- Partial.Unsafe
+  , "unsafePartial", "_crashWith"
+  -- Data.Function.Uncurried
+  , "mkFn0", "mkFn2", "mkFn3", "mkFn4", "mkFn5", "mkFn6", "mkFn7", "mkFn8", "mkFn9", "mkFn10"
+  , "runFn0", "runFn2", "runFn3", "runFn4", "runFn5", "runFn6", "runFn7", "runFn8", "runFn9", "runFn10"
+  ]
+
 -- | Generate a complete Python module from a BackendModule
 codegenModule :: BackendModule -> String
 codegenModule mod =
@@ -76,7 +128,9 @@ codegenModule mod =
       ) imports
 
       -- Generate foreign import statement if there are foreign bindings
-      foreignIdents = Array.fromFoldable mod.foreign
+      -- Filter out functions that are already provided by the runtime
+      allForeignIdents = Array.fromFoldable mod.foreign
+      foreignIdents = Array.filter (\(Ident n) -> not (Set.member n runtimeProvidedForeign)) allForeignIdents
       foreignLine = if Array.null foreignIdents
         then ""
         else "from " <> pyForeignModuleName mod.name <> " import " <>
@@ -116,8 +170,10 @@ processModule opts mod coreFnPath = do
   FS.writeTextFile UTF8 outPath pyCode
   Console.log $ "Generated: " <> pyModName <> ".py"
 
-  -- Handle foreign imports
-  unless (Set.isEmpty mod.foreign) do
+  -- Handle foreign imports (only for functions not provided by runtime)
+  let allForeignIdents = Array.fromFoldable mod.foreign
+      nonRuntimeForeign = Array.filter (\(Ident n) -> not (Set.member n runtimeProvidedForeign)) allForeignIdents
+  unless (Array.null nonRuntimeForeign) do
     let foreignOutputPath = Path.concat [opts.outputDir, pyForeignModuleName mod.name <> ".py"]
         -- The CoreFn modulePath is something like "src/FFITest.purs" (relative to project root)
         -- We need to find the sibling .py file by replacing .purs with .py
@@ -162,7 +218,8 @@ generateRuntime outputDir = do
     , "    'zipWithImpl', 'unsafeIndexImpl', 'foldlArray', 'foldrArray',"
     , "    'arrayMap', 'arrayBind', 'arrayApply',"
     , "    'unsafeGet', 'unsafeSet', 'unsafeHas', 'unsafeDelete', 'unsafeCoerce',"
-    , "    'unsafePerformEffect',"
+    , "    'pureE', 'bindE', 'untilE', 'whileE', 'forE', 'foreachE', 'unsafePerformEffect',"
+    , "    'Ref', '_new', '_read', '_modify', '_write',"
     , "    'mkFn0', 'mkFn2', 'mkFn3', 'mkFn4', 'mkFn5',"
     , "    'runFn0', 'runFn2', 'runFn3', 'runFn4', 'runFn5',"
     , "]"
@@ -307,8 +364,82 @@ generateRuntime outputDir = do
     , "unsafeCoerce = lambda x: x"
     , ""
     , "# Effect"
+    , "# In PureScript, Effect a is represented as a thunk: () -> a"
+    , "pureE = lambda a: lambda: a"
+    , "def bindE(ma):"
+    , "    def step2(f):"
+    , "        def effect():"
+    , "            a = ma()"
+    , "            return f(a)()"
+    , "        return effect"
+    , "    return step2"
+    , ""
+    , "def untilE(cond):"
+    , "    def effect():"
+    , "        while not cond():"
+    , "            pass"
+    , "    return effect"
+    , ""
+    , "def whileE(cond):"
+    , "    def step2(body):"
+    , "        def effect():"
+    , "            while cond():"
+    , "                body()"
+    , "        return effect"
+    , "    return step2"
+    , ""
+    , "def forE(lo):"
+    , "    def step2(hi):"
+    , "        def step3(f):"
+    , "            def effect():"
+    , "                for i in range(lo, hi):"
+    , "                    f(i)()"
+    , "            return effect"
+    , "        return step3"
+    , "    return step2"
+    , ""
+    , "def foreachE(xs):"
+    , "    def step2(f):"
+    , "        def effect():"
+    , "            for x in xs:"
+    , "                f(x)()"
+    , "        return effect"
+    , "    return step2"
+    , ""
     , "def unsafePerformEffect(eff):"
     , "    return eff()"
+    , ""
+    , "# Effect.Ref"
+    , "class Ref:"
+    , "    def __init__(self, value):"
+    , "        self.value = value"
+    , ""
+    , "def _new(val):"
+    , "    def effect():"
+    , "        return Ref(val)"
+    , "    return effect"
+    , ""
+    , "def _read(ref):"
+    , "    def effect():"
+    , "        return ref.value"
+    , "    return effect"
+    , ""
+    , "def _modify(f):"
+    , "    def step2(ref):"
+    , "        def effect():"
+    , "            old = ref.value"
+    , "            result = f(old)"
+    , "            ref.value = result['state']"
+    , "            return result['value']"
+    , "        return effect"
+    , "    return step2"
+    , ""
+    , "def _write(val):"
+    , "    def step2(ref):"
+    , "        def effect():"
+    , "            ref.value = val"
+    , "        return effect"
+    , "    return step2"
     , ""
     , "# Partial"
     , "def _crashWith(msg):"
