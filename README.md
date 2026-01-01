@@ -4,19 +4,41 @@ A PureScript backend that compiles to Python.
 
 ## Status
 
-**Early Development** - This is an initial implementation based on the architecture
-of [purerl](https://github.com/purerl/purerl) (the Erlang backend).
+**Working** - Hello World and core libraries compile and run successfully.
 
-### What Works (Planned)
+### What Works
 
 - [x] Basic data types (Int, Number, String, Boolean)
 - [x] Records (as Python dicts)
 - [x] Arrays (as Python lists)
 - [x] Functions and currying
-- [x] ADTs/constructors (as tuples)
-- [ ] Pattern matching (via if/elif or match statements)
-- [ ] FFI to Python
-- [ ] Standard library bindings
+- [x] ADTs/constructors (as tuples with tag)
+- [x] Pattern matching (via conditional expressions)
+- [x] Mutually recursive bindings (lazy thunk pattern)
+- [x] Module imports and dependencies
+- [x] FFI to Python (`_foreign.py` files)
+- [x] Standard library bindings (Effect, Eq, Ord, Show, etc.)
+
+### Example
+
+```purescript
+-- src/Main.purs
+module Main where
+
+import Prelude
+import Effect (Effect)
+import Effect.Console (log)
+
+main :: Effect Unit
+main = log "Hello from PureScript!"
+```
+
+```bash
+$ spago build
+$ purepy output output-py
+$ python3 -c "import sys; sys.path.insert(0, 'output-py'); import main; main.main()"
+Hello from PureScript!
+```
 
 ## Installation
 
@@ -88,15 +110,18 @@ def myFunction(x):
 
 ```
 purescript-python/
-├── app/                    # CLI entry point
+├── app/Main.hs                           # CLI entry point
 ├── src/Language/PureScript/Python/
-│   ├── CodeGen.hs         # CoreFn → Python AST
-│   ├── CodeGen/
-│   │   ├── AST.hs         # Python AST types
-│   │   └── Common.hs      # Utility functions
-│   └── Pretty.hs          # AST → Python source
-├── tests/                  # Test suite
-└── package.yaml           # Build configuration
+│   ├── Make.hs                           # Main compiler: CoreFn → Python
+│   └── CodeGen/
+│       └── Common.hs                     # Identifier handling, module names
+├── docs/
+│   └── IMPLEMENTATION-NOTES.md           # Implementation details
+├── test-project/                         # Example PureScript project
+│   ├── src/Main.purs
+│   ├── output/                           # PureScript CoreFn output
+│   └── output-py/                        # Generated Python
+└── package.yaml                          # Build configuration
 ```
 
 ### Running Tests
@@ -104,6 +129,10 @@ purescript-python/
 ```bash
 stack test
 ```
+
+## Documentation
+
+- [Implementation Notes](docs/IMPLEMENTATION-NOTES.md) - Detailed notes on challenges and solutions, including comparison with other backends (JavaScript, Erlang, Lua)
 
 ## Credits
 

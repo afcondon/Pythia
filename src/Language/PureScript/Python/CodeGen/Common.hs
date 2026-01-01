@@ -100,12 +100,17 @@ toPythonIdent v = case uncons v of
     isValidPythonChar c = isAlpha c || isDigit c || c == '_'
 
 -- | Convert an Ident to a Python function/value name (snake_case)
+-- Escapes Python reserved words by adding underscore suffix
 identToPyName :: Ident -> Text
-identToPyName = toPythonIdent . runIdent'
+identToPyName ident =
+  let name = toPythonIdent (runIdent' ident)
+  in if nameIsPythonReserved name
+     then name <> "_"
+     else name
 
 -- | Convert an Ident to a Python variable name
 identToVar :: Ident -> Text
-identToVar = toPythonIdent . runIdent'
+identToVar = identToPyName
 
 -- | Get the raw text from an Ident, handling internal identifiers
 runIdent' :: Ident -> Text
