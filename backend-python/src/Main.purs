@@ -20,7 +20,7 @@ import Node.FS.Aff as FS
 import Node.Path as Path
 import Node.Process as Process
 import PureScript.Backend.Optimizer.Builder (buildModules)
-import PureScript.Backend.Optimizer.CoreFn (Ann, Module)
+import PureScript.Backend.Optimizer.CoreFn (Ann, Module(..))
 import PureScript.Backend.Optimizer.CoreFn.Json (decodeModule)
 import PureScript.Backend.Optimizer.CoreFn.Sort (sortModules)
 import PureScript.Backend.Python.Builder (generateRuntime, processModule)
@@ -69,12 +69,14 @@ compile opts = do
       Console.log "Running optimizer and generating Python..."
 
       -- Use the optimizer's buildModules
-      let pyOpts = { outputDir: opts.outputDir }
+      let pyOpts = { outputDir: opts.outputDir, inputDir: opts.inputDir }
       sortedModules # buildModules
         { analyzeCustom: \_ _ -> Nothing  -- No custom analysis
         , directives: Map.empty           -- No custom directives
         , foreignSemantics: Map.empty     -- No custom foreign semantics
-        , onCodegenModule: \_ _ backendMod _ -> processModule pyOpts backendMod
+        , onCodegenModule: \_ coreFnMod backendMod _ ->
+            let Module { path } = coreFnMod
+            in processModule pyOpts backendMod path
         , onPrepareModule: \_ mod -> pure mod
         , traceIdents: Set.empty
         }

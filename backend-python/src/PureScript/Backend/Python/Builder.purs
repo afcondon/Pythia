@@ -4,14 +4,18 @@ module PureScript.Backend.Python.Builder where
 import Prelude
 
 import Data.Array as Array
-import Data.Maybe (Maybe(..))
+import Data.Either (isRight)
+import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set as Set
 import Data.String as String
+import Data.String.Pattern (Pattern(..))
 import Data.Tuple (Tuple(..))
-import Effect.Aff (Aff)
+import Effect.Aff (Aff, attempt)
 import Effect.Class.Console as Console
 import Node.Encoding (Encoding(..))
 import Node.FS.Aff as FS
 import Node.Path as Path
+import Node.Path (extname)
 import PureScript.Backend.Optimizer.Convert (BackendModule)
 import PureScript.Backend.Optimizer.CoreFn (Ident(..), ModuleName(..))
 import PureScript.Backend.Optimizer.Semantics (NeutralExpr)
@@ -23,6 +27,7 @@ import PureScript.Backend.Python.Syntax as Py
 -- | Options for Python codegen
 type PythonBuildOptions =
   { outputDir :: String
+  , inputDir :: String
   }
 
 -- | Generate Python code for a single binding
@@ -54,6 +59,10 @@ codegenBindingGroup modName ctx { recursive: true, bindings } =
       assigns = map (codegenBinding modName ctx) bindings
   in String.joinWith "\n" (forwardDecls <> assigns)
 
+-- | Generate the foreign module name for a given module
+pyForeignModuleName :: ModuleName -> String
+pyForeignModuleName modName = toPyModuleName modName <> "_foreign"
+
 -- | Generate a complete Python module from a BackendModule
 codegenModule :: BackendModule -> String
 codegenModule mod =
@@ -65,6 +74,13 @@ codegenModule mod =
       importLines = map (\(ModuleName imp) ->
         "import " <> toPyModuleName (ModuleName imp) <> " as " <> toPyModuleName (ModuleName imp)
       ) imports
+
+      -- Generate foreign import statement if there are foreign bindings
+      foreignIdents = Array.fromFoldable mod.foreign
+      foreignLine = if Array.null foreignIdents
+        then ""
+        else "from " <> pyForeignModuleName mod.name <> " import " <>
+             String.joinWith ", " (map (\(Ident n) -> sanitizeIdent n) foreignIdents)
 
       -- Generate bindings
       bindingLines = map (codegenBindingGroup mod.name ctx) mod.bindings
@@ -82,6 +98,7 @@ codegenModule mod =
     , "from purepy_runtime import *"
     , ""
     , String.joinWith "\n" importLines
+    , if foreignLine == "" then "" else foreignLine
     , ""
     , String.joinWith "\n\n" bindingLines
     , ""
@@ -90,14 +107,35 @@ codegenModule mod =
     ]
 
 -- | Process a single module with the optimizer and generate Python
-processModule :: PythonBuildOptions -> BackendModule -> Aff Unit
-processModule opts mod = do
+processModule :: PythonBuildOptions -> BackendModule -> String -> Aff Unit
+processModule opts mod coreFnPath = do
   let pyModName = toPyModuleName mod.name
       pyCode = codegenModule mod
       outPath = Path.concat [opts.outputDir, pyModName <> ".py"]
 
   FS.writeTextFile UTF8 outPath pyCode
   Console.log $ "Generated: " <> pyModName <> ".py"
+
+  -- Handle foreign imports
+  unless (Set.isEmpty mod.foreign) do
+    let foreignOutputPath = Path.concat [opts.outputDir, pyForeignModuleName mod.name <> ".py"]
+        -- The CoreFn modulePath is something like "src/FFITest.purs" (relative to project root)
+        -- We need to find the sibling .py file by replacing .purs with .py
+        -- The input directory (e.g., "output") is the CoreFn output, so we go up one level
+        projectRoot = Path.concat [opts.inputDir, ".."]
+        moduleBasePath = fromMaybe coreFnPath (String.stripSuffix (Pattern (extname coreFnPath)) coreFnPath)
+        foreignSiblingPath = Path.concat [projectRoot, moduleBasePath <> ".py"]
+
+    result <- attempt $ copyFile foreignSiblingPath foreignOutputPath
+    case isRight result of
+      true -> Console.log $ "  Copied foreign: " <> pyForeignModuleName mod.name <> ".py"
+      false -> Console.log $ "  Warning: Foreign implementation missing for " <> pyModName
+
+-- | Copy a file
+copyFile :: String -> String -> Aff Unit
+copyFile src dst = do
+  content <- FS.readTextFile UTF8 src
+  FS.writeTextFile UTF8 dst content
 
 -- | Generate Python runtime support module
 generateRuntime :: String -> Aff Unit
