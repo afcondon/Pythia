@@ -394,25 +394,39 @@ mypyc output-py/data_*.py output-py/control_*.py
 
 ---
 
-## Benchmarking Plan
+## Benchmark Results
 
-### Micro-benchmarks
+### Baseline Measurements
 
-| Benchmark | Measures |
-|-----------|----------|
-| `fib(35)` | Recursive function calls |
-| `sum [1..1000000]` | List operations, folds |
-| `map (*2) [1..100000]` | Higher-order functions |
-| `show largeADT` | Pattern matching |
-| `traverse effect list` | Monadic operations |
+Comparing hand-written Python to PureScript-generated Python:
 
-### Comparison Targets
+| Benchmark | Hand-written Python | PureScript-Python | Overhead |
+|-----------|---------------------|-------------------|----------|
+| `fib(30)` | 121ms | 2714ms | **22.4x** |
+| `tree sum (depth 15)` | 19ms | 61ms | **3.2x** |
+| `apply inc 100x` | 0.01ms | 0.20ms | **20x** |
+| `sumTo 100` | 0.01ms | 0.18ms | **18x** |
 
-- PureScript → JavaScript (baseline)
-- PureScript → Python (our backend)
-- Hand-written Python equivalent
-- Python with PyPy
-- Python with mypyc
+### Analysis
+
+The overhead comes from several sources:
+
+1. **Currying** - Every function application like `fib(n-1)` becomes `((sub)(n))(1)` → multiple lambda calls
+2. **Type class dictionaries** - Arithmetic via `add`, `sub` from `Data.Semiring`/`Data.Ring` dictionaries
+3. **Lazy thunks** - Recursive functions like `fib` use `_lazy_fib()` indirection
+4. **Pattern matching** - Guards generate nested conditional expressions
+
+The tree benchmark has lower overhead (3.2x) because:
+- Tree construction/traversal is dominated by object allocation
+- Less arithmetic dictionary lookups
+- Simpler pattern matching (just ADT constructors)
+
+### Recursion Limit
+
+Python's default recursion limit (~1000) severely limits tail-recursive code:
+- `applyN inc 10000 0` causes stack overflow
+- Had to reduce to 100 iterations for benchmarks
+- **Trampoline TCO is essential for practical use**
 
 ### Profiling
 
@@ -430,14 +444,47 @@ Key metrics:
 
 ---
 
+## purescript-backend-optimizer Integration
+
+The most effective path to optimized output is integrating with [purescript-backend-optimizer](https://github.com/aristanetworks/purescript-backend-optimizer), the optimization toolkit used by `purs-backend-es` and `purescript-backend-erl`.
+
+### What It Provides
+
+- **Aggressive inlining** - Subsumes existing PureScript compiler optimizations
+- **Uncurrying** - Tracks function arities across modules, generates both curried and uncurried versions
+- **Pattern matching optimization** - Eliminates redundant tests
+- **Better TCO** - Fires in more cases, supports mutual recursion
+- **Lighter data encoding** - Plain objects with string/int tags
+
+### Integration Options
+
+| Approach | Effort | Benefit |
+|----------|--------|---------|
+| **Rewrite backend in PureScript** | High | Full optimizer access, like `purescript-backend-erl` |
+| **Port key optimizations to Haskell** | Medium | Most important optimizations only |
+| **Keep Haskell, simpler optimizations** | Low | Smart Rec detection, basic inlining |
+
+The `purescript-backend-erl` approach (PureScript backend using optimizer as library) achieves **30-40% speedup**. This is the recommended long-term direction.
+
+### Current Approach
+
+Our Haskell-based backend implements simpler optimizations directly:
+- Smart Rec detection (only thunk truly recursive bindings)
+- Basic pattern matching (conditional expressions)
+- FFI integration
+
+For full uncurrying with cross-module arity tracking, a PureScript rewrite is recommended.
+
+---
+
 ## Implementation Priority
 
 ### Immediate (This Session)
 
-1. **Benchmarking suite** - Establish baseline measurements
-2. **Uncurrying** - Biggest performance win
+1. **Benchmarking suite** - Establish baseline measurements ✓
+2. **Smart Rec detection** - Only thunk truly recursive bindings
 3. **FFI stub generator** - Improve developer experience
-4. **Smart Rec detection** - Reduce thunk overhead
+4. **Document optimizer integration path**
 
 ### Short-term (Next Few Sessions)
 

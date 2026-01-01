@@ -1,8 +1,10 @@
 package:
   name: test-hello
   dependencies:
+    - arrays
     - console
     - effect
+    - maybe
     - prelude
 workspace:
   packageSet:

@@ -14,8 +14,10 @@ import Prelude
 import Control.Monad (forM_, when)
 import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
+import Data.List (partition)
 import Data.Aeson (decodeFileStrict)
 import Data.Aeson.Types (parseMaybe)
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing, doesFileExist)
@@ -28,6 +30,10 @@ import qualified Language.PureScript.CoreFn.FromJSON as CoreFn
 import Language.PureScript.PSString (PSString, decodeString)
 
 import Language.PureScript.Python.CodeGen.Common (pyModuleNameBase, identToPyName)
+
+-- Note: Arity-based uncurrying requires tracking arities across module boundaries.
+-- The recommended approach is to integrate with purescript-backend-optimizer,
+-- which provides this infrastructure. See docs/ROADMAP.md for details.
 
 data CompileOptions = CompileOptions
   { inputDir :: FilePath    -- ^ Directory containing corefn.json files (usually "output")
@@ -103,6 +109,42 @@ compileModule opts corefnFile = runExceptT $ do
 
           return pyModName
 
+-- | Collect all local variable references from an expression
+collectLocalRefs :: P.ModuleName -> CoreFn.Expr CoreFn.Ann -> Set.Set T.Text
+collectLocalRefs currentMod = go
+  where
+    go :: CoreFn.Expr CoreFn.Ann -> Set.Set T.Text
+    go = \case
+      CoreFn.Literal _ lit -> goLit lit
+      CoreFn.Var _ (P.Qualified qb ident) ->
+        case qb of
+          P.ByModuleName mn | mn == currentMod -> Set.singleton (identToPyName ident)
+          P.BySourcePos _ -> Set.singleton (identToPyName ident)
+          _ -> Set.empty
+      CoreFn.Abs _ _ body -> go body
+      CoreFn.App _ fn arg -> go fn <> go arg
+      CoreFn.Let _ binds body -> foldMap goBind binds <> go body
+      CoreFn.Case _ exprs alts -> foldMap go exprs <> foldMap goAlt alts
+      CoreFn.Accessor _ _ expr -> go expr
+      CoreFn.ObjectUpdate _ expr _ updates -> go expr <> foldMap (go . snd) updates
+      CoreFn.Constructor {} -> Set.empty
+
+    goLit :: CoreFn.Literal (CoreFn.Expr CoreFn.Ann) -> Set.Set T.Text
+    goLit = \case
+      CoreFn.ArrayLiteral exprs -> foldMap go exprs
+      CoreFn.ObjectLiteral fields -> foldMap (go . snd) fields
+      _ -> Set.empty
+
+    goBind :: CoreFn.Bind CoreFn.Ann -> Set.Set T.Text
+    goBind (CoreFn.NonRec _ _ expr) = go expr
+    goBind (CoreFn.Rec bindings) = foldMap (go . snd) bindings
+
+    goAlt :: CoreFn.CaseAlternative CoreFn.Ann -> Set.Set T.Text
+    goAlt (CoreFn.CaseAlternative _ result) =
+      case result of
+        Left guards -> foldMap (\(g, b) -> go g <> go b) guards
+        Right body -> go body
+
 -- | Generate Python code for a module (simplified direct translation)
 generateModulePy :: CoreFn.Module CoreFn.Ann -> T.Text
 generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleDecls cfModule)
@@ -115,21 +157,32 @@ generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleD
     generateBinding _ (CoreFn.NonRec _ ident expr) =
       identName ident <> " = " <> generateExpr [] expr
     generateBinding _ (CoreFn.Rec bindings) =
-      -- For mutually recursive bindings, use lazy wrappers
-      -- 1. Define _lazy_X thunks that capture the init lambdas
-      -- 2. Define actual X values by forcing the thunks
+      -- Smart Rec detection: only thunk bindings that actually reference
+      -- other bindings in the group
       let modName = case currentModule of
             P.ModuleName mn -> mn
-          recNames = [identName ident | ((_, ident), _) <- bindings]
-          -- Generate _lazy_X = _runtime_lazy(...) for each binding
+          allNames = Set.fromList [identName ident | ((_, ident), _) <- bindings]
+          -- For each binding, check if it references any name in the group
+          needsThunk ((_, _ident), expr) =
+            let refs = collectLocalRefs currentModule expr
+                -- A binding needs a thunk if it references any binding in the group
+            in not $ Set.null $ Set.intersection refs allNames
+          -- Partition into truly recursive and non-recursive
+          (recursive, nonRecursive) = partition needsThunk bindings
+          recNames = [identName ident | ((_, ident), _) <- recursive]
+          -- Generate non-recursive bindings first (simple assignment)
+          nonRecDefs = [ identName ident <> " = " <> generateExpr [] expr
+                       | ((_, ident), expr) <- nonRecursive
+                       ]
+          -- Generate lazy thunks only for truly recursive bindings
           lazyDefs = [ "_lazy_" <> identName ident <> " = _runtime_lazy(\"" <> identName ident <> "\", \"" <> modName <> "\", lambda: " <> generateExpr recNames expr <> ")"
-                     | ((_, ident), expr) <- bindings
+                     | ((_, ident), expr) <- recursive
                      ]
-          -- Generate X = _lazy_X() to force evaluation
+          -- Force evaluation of recursive bindings
           valueDefs = [ identName ident <> " = _lazy_" <> identName ident <> "()"
-                      | ((_, ident), _) <- bindings
+                      | ((_, ident), _) <- recursive
                       ]
-      in T.unlines (lazyDefs ++ valueDefs)
+      in T.unlines (nonRecDefs ++ lazyDefs ++ valueDefs)
 
     identName :: P.Ident -> T.Text
     identName = identToPyName
@@ -139,10 +192,17 @@ generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleD
     generateExpr recNames = \case
       CoreFn.Literal _ lit -> generateLiteral recNames lit
       CoreFn.Var _ qi -> generateQualifiedIdent recNames qi
+
+      -- Keep lambda definitions curried for cross-module compatibility
+      -- (We only optimize fully-saturated calls within this module)
       CoreFn.Abs _ arg body ->
         "(lambda " <> identName arg <> ": " <> generateExpr recNames body <> ")"
+
+      -- Application: generate curried form
+      -- (Uncurrying requires global arity tracking - future enhancement)
       CoreFn.App _ fn arg ->
         "(" <> generateExpr recNames fn <> ")(" <> generateExpr recNames arg <> ")"
+
       CoreFn.Let _ binds body ->
         "(lambda: (" <> T.intercalate ", " (map (generateLetBind recNames) binds) <> ", " <> generateExpr recNames body <> ")[-1])()"
       CoreFn.Case _ exprs alts ->
@@ -188,7 +248,24 @@ generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleD
     generateAlt :: [T.Text] -> CoreFn.CaseAlternative CoreFn.Ann -> T.Text -> T.Text
     generateAlt recNames (CoreFn.CaseAlternative binders result) rest =
       case result of
-        Left _ -> rest  -- Guarded case not yet implemented
+        Left guards ->
+          -- Guarded case: list of (guard_expr, body_expr) pairs
+          -- Generate: body1 if guard1 else (body2 if guard2 else ... rest)
+          let generateGuards [] = rest
+              generateGuards ((guard, body):gs) =
+                let guardCode = generateExpr recNames guard
+                    bodyCode = generateExpr recNames body
+                    restCode = generateGuards gs
+                in "(" <> bodyCode <> " if " <> guardCode <> " else " <> restCode <> ")"
+              -- First, bind pattern variables, then evaluate guards
+              patResults = case binders of
+                [binder] -> [generatePattern recNames "__v__" binder]
+                _ -> zipWith (\i b -> generatePattern recNames ("__v__[" <> T.pack (show i) <> "]") b) [(0::Int)..] binders
+              allBindings = concatMap snd patResults
+              guardedCode = generateGuards guards
+          in if null allBindings
+             then guardedCode
+             else "(lambda: (" <> T.intercalate ", " allBindings <> ", " <> guardedCode <> ")[-1])()"
         Right body ->
           case binders of
             -- Single binder patterns
@@ -703,6 +780,545 @@ generateFFIFiles dir = do
     , ""
     , "def runEffectFn3(f):"
     , "    return lambda a: lambda b: lambda c: lambda: f(a, b, c)"
+    ]
+  -- Data.Array
+  TIO.writeFile (dir </> "data_array_foreign.py") $ T.unlines
+    [ "# FFI for Data.Array"
+    , "def range_(start):"
+    , "    return lambda end: list(range(start, end))"
+    , ""
+    , "def length(arr):"
+    , "    return len(arr)"
+    , ""
+    , "def cons(x):"
+    , "    return lambda xs: [x] + xs"
+    , ""
+    , "def snoc(xs):"
+    , "    return lambda x: xs + [x]"
+    , ""
+    , "def uncons(empty):"
+    , "    def step(next_):"
+    , "        def step2(xs):"
+    , "            if len(xs) == 0:"
+    , "                return empty(None)"
+    , "            return next_({'head': xs[0], 'tail': xs[1:]})"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def indexImpl(just):"
+    , "    def step(nothing):"
+    , "        def step2(xs):"
+    , "            def step3(i):"
+    , "                if i < 0 or i >= len(xs):"
+    , "                    return nothing"
+    , "                return just(xs[i])"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def findIndexImpl(just):"
+    , "    def step(nothing):"
+    , "        def step2(f):"
+    , "            def step3(xs):"
+    , "                for i, x in enumerate(xs):"
+    , "                    if f(x):"
+    , "                        return just(i)"
+    , "                return nothing"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def findLastIndexImpl(just):"
+    , "    def step(nothing):"
+    , "        def step2(f):"
+    , "            def step3(xs):"
+    , "                for i in range(len(xs) - 1, -1, -1):"
+    , "                    if f(xs[i]):"
+    , "                        return just(i)"
+    , "                return nothing"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def _insertAt(just):"
+    , "    def step(nothing):"
+    , "        def step2(i):"
+    , "            def step3(x):"
+    , "                def step4(xs):"
+    , "                    if i < 0 or i > len(xs):"
+    , "                        return nothing"
+    , "                    result = xs[:i] + [x] + xs[i:]"
+    , "                    return just(result)"
+    , "                return step4"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def _deleteAt(just):"
+    , "    def step(nothing):"
+    , "        def step2(i):"
+    , "            def step3(xs):"
+    , "                if i < 0 or i >= len(xs):"
+    , "                    return nothing"
+    , "                result = xs[:i] + xs[i+1:]"
+    , "                return just(result)"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def _updateAt(just):"
+    , "    def step(nothing):"
+    , "        def step2(i):"
+    , "            def step3(x):"
+    , "                def step4(xs):"
+    , "                    if i < 0 or i >= len(xs):"
+    , "                        return nothing"
+    , "                    result = xs[:i] + [x] + xs[i+1:]"
+    , "                    return just(result)"
+    , "                return step4"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def reverse(xs):"
+    , "    return xs[::-1]"
+    , ""
+    , "def concat(xss):"
+    , "    result = []"
+    , "    for xs in xss:"
+    , "        result.extend(xs)"
+    , "    return result"
+    , ""
+    , "def filter_(f):"
+    , "    return lambda xs: [x for x in xs if f(x)]"
+    , ""
+    , "def partition(f):"
+    , "    def step(xs):"
+    , "        yes, no = [], []"
+    , "        for x in xs:"
+    , "            if f(x):"
+    , "                yes.append(x)"
+    , "            else:"
+    , "                no.append(x)"
+    , "        return {'yes': yes, 'no': no}"
+    , "    return step"
+    , ""
+    , "def sortByImpl(cmp):"
+    , "    def step(xs):"
+    , "        from functools import cmp_to_key"
+    , "        def py_cmp(a, b):"
+    , "            result = cmp(a)(b)"
+    , "            if result[0] == 'LT': return -1"
+    , "            if result[0] == 'GT': return 1"
+    , "            return 0"
+    , "        return sorted(xs, key=cmp_to_key(py_cmp))"
+    , "    return step"
+    , ""
+    , "def slice(start):"
+    , "    return lambda end: lambda xs: xs[start:end]"
+    , ""
+    , "def take(n):"
+    , "    return lambda xs: xs[:n]"
+    , ""
+    , "def drop(n):"
+    , "    return lambda xs: xs[n:]"
+    , ""
+    , "def zipWith(f):"
+    , "    def step(xs):"
+    , "        def step2(ys):"
+    , "            return [f(x)(y) for x, y in zip(xs, ys)]"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def unsafeIndexImpl(xs):"
+    , "    return lambda i: xs[i]"
+    ]
+  -- Data.Array.ST
+  TIO.writeFile (dir </> "data_array_s_t_foreign.py") $ T.unlines
+    [ "# FFI for Data.Array.ST"
+    , "def new_():"
+    , "    return lambda: []"
+    , ""
+    , "def peekImpl(just):"
+    , "    def step(nothing):"
+    , "        def step2(i):"
+    , "            def step3(arr):"
+    , "                def effect():"
+    , "                    if i < 0 or i >= len(arr):"
+    , "                        return nothing"
+    , "                    return just(arr[i])"
+    , "                return effect"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def poke(i):"
+    , "    def step(x):"
+    , "        def step2(arr):"
+    , "            def effect():"
+    , "                if 0 <= i < len(arr):"
+    , "                    arr[i] = x"
+    , "                    return True"
+    , "                return False"
+    , "            return effect"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def pushAll(xs):"
+    , "    def step(arr):"
+    , "        def effect():"
+    , "            start = len(arr)"
+    , "            arr.extend(xs)"
+    , "            return start"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def length_(arr):"
+    , "    return lambda: len(arr)"
+    , ""
+    , "def freeze(arr):"
+    , "    return lambda: list(arr)"
+    , ""
+    , "def thaw(arr):"
+    , "    return lambda: list(arr)"
+    , ""
+    , "def unsafeFreeze(arr):"
+    , "    return lambda: arr"
+    , ""
+    , "def unsafeThaw(arr):"
+    , "    return lambda: arr"
+    , ""
+    , "def splice(i):"
+    , "    def step(n):"
+    , "        def step2(xs):"
+    , "            def step3(arr):"
+    , "                def effect():"
+    , "                    removed = arr[i:i+n]"
+    , "                    arr[i:i+n] = xs"
+    , "                    return removed"
+    , "                return effect"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def copyImpl(arr):"
+    , "    return lambda: list(arr)"
+    , ""
+    , "def sortByImpl_(cmp):"
+    , "    def step(arr):"
+    , "        def effect():"
+    , "            from functools import cmp_to_key"
+    , "            def py_cmp(a, b):"
+    , "                result = cmp(a)(b)"
+    , "                if result[0] == 'LT': return -1"
+    , "                if result[0] == 'GT': return 1"
+    , "                return 0"
+    , "            arr.sort(key=cmp_to_key(py_cmp))"
+    , "            return arr"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def toAssocArray(arr):"
+    , "    return lambda: [{'value': v, 'index': i} for i, v in enumerate(arr)]"
+    ]
+  -- Control.Monad.ST.Internal
+  TIO.writeFile (dir </> "control_monad_s_t_internal_foreign.py") $ T.unlines
+    [ "# FFI for Control.Monad.ST.Internal"
+    , "def map__(f):"
+    , "    def step(a):"
+    , "        def effect():"
+    , "            return f(a())"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def pure__(a):"
+    , "    return lambda: a"
+    , ""
+    , "def bind__(a):"
+    , "    def step(f):"
+    , "        def effect():"
+    , "            return f(a())()"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def run(f):"
+    , "    return f()"
+    , ""
+    , "def while_(cond):"
+    , "    def step(body):"
+    , "        def effect():"
+    , "            while cond():"
+    , "                body()"
+    , "            return None"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def for_(lo):"
+    , "    def step(hi):"
+    , "        def step2(f):"
+    , "            def effect():"
+    , "                for i in range(lo, hi):"
+    , "                    f(i)()"
+    , "                return None"
+    , "            return effect"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def foreach(xs):"
+    , "    def step(f):"
+    , "        def effect():"
+    , "            for x in xs:"
+    , "                f(x)()"
+    , "            return None"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def newSTRef(val):"
+    , "    return lambda: [val]"
+    , ""
+    , "def readSTRef(ref):"
+    , "    return lambda: ref[0]"
+    , ""
+    , "def modifySTRef(ref):"
+    , "    def step(f):"
+    , "        def effect():"
+    , "            ref[0] = f(ref[0])"
+    , "            return None"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def writeSTRef(ref):"
+    , "    def step(val):"
+    , "        def effect():"
+    , "            ref[0] = val"
+    , "            return None"
+    , "        return effect"
+    , "    return step"
+    ]
+  -- Effect.Ref
+  TIO.writeFile (dir </> "effect_ref_foreign.py") $ T.unlines
+    [ "# FFI for Effect.Ref"
+    , "def _new(val):"
+    , "    return lambda: [val]"
+    , ""
+    , "def read(ref):"
+    , "    return lambda: ref[0]"
+    , ""
+    , "def modifyImpl(f):"
+    , "    def step(ref):"
+    , "        def effect():"
+    , "            result = f(ref[0])"
+    , "            ref[0] = result['state']"
+    , "            return result['value']"
+    , "        return effect"
+    , "    return step"
+    , ""
+    , "def write(val):"
+    , "    def step(ref):"
+    , "        def effect():"
+    , "            ref[0] = val"
+    , "            return None"
+    , "        return effect"
+    , "    return step"
+    ]
+  -- Unsafe.Coerce
+  TIO.writeFile (dir </> "unsafe_coerce_foreign.py") $ T.unlines
+    [ "# FFI for Unsafe.Coerce"
+    , "def unsafeCoerce(x):"
+    , "    return x"
+    ]
+  -- Partial.Unsafe
+  TIO.writeFile (dir </> "partial_unsafe_foreign.py") $ T.unlines
+    [ "# FFI for Partial.Unsafe"
+    , "def _unsafePartial(f):"
+    , "    return f()"
+    ]
+  -- Control.Monad.Rec.Class
+  TIO.writeFile (dir </> "control_monad_rec_class_foreign.py") $ T.unlines
+    [ "# FFI for Control.Monad.Rec.Class"
+    , "# Loop and Done constructors"
+    , "Loop = lambda a: ('Loop', a)"
+    , "Done = lambda a: ('Done', a)"
+    ]
+  -- Data.Function.Uncurried
+  TIO.writeFile (dir </> "data_function_uncurried_foreign.py") $ T.unlines
+    [ "# FFI for Data.Function.Uncurried"
+    , "def mkFn0(f):"
+    , "    return lambda: f(None)"
+    , ""
+    , "def mkFn1(f):"
+    , "    return f"
+    , ""
+    , "def mkFn2(f):"
+    , "    return lambda a, b: f(a)(b)"
+    , ""
+    , "def mkFn3(f):"
+    , "    return lambda a, b, c: f(a)(b)(c)"
+    , ""
+    , "def mkFn4(f):"
+    , "    return lambda a, b, c, d: f(a)(b)(c)(d)"
+    , ""
+    , "def mkFn5(f):"
+    , "    return lambda a, b, c, d, e: f(a)(b)(c)(d)(e)"
+    , ""
+    , "def runFn0(f):"
+    , "    return f()"
+    , ""
+    , "def runFn1(f):"
+    , "    return f"
+    , ""
+    , "def runFn2(f):"
+    , "    return lambda a: lambda b: f(a, b)"
+    , ""
+    , "def runFn3(f):"
+    , "    return lambda a: lambda b: lambda c: f(a, b, c)"
+    , ""
+    , "def runFn4(f):"
+    , "    return lambda a: lambda b: lambda c: lambda d: f(a, b, c, d)"
+    , ""
+    , "def runFn5(f):"
+    , "    return lambda a: lambda b: lambda c: lambda d: lambda e: f(a, b, c, d, e)"
+    ]
+  -- Data.Foldable
+  TIO.writeFile (dir </> "data_foldable_foreign.py") $ T.unlines
+    [ "# FFI for Data.Foldable"
+    , "def foldrArray(f):"
+    , "    def step(init):"
+    , "        def step2(xs):"
+    , "            result = init"
+    , "            for x in reversed(xs):"
+    , "                result = f(x)(result)"
+    , "            return result"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def foldlArray(f):"
+    , "    def step(init):"
+    , "        def step2(xs):"
+    , "            result = init"
+    , "            for x in xs:"
+    , "                result = f(result)(x)"
+    , "            return result"
+    , "        return step2"
+    , "    return step"
+    ]
+  -- Data.Traversable
+  TIO.writeFile (dir </> "data_traversable_foreign.py") $ T.unlines
+    [ "# FFI for Data.Traversable"
+    , "# traverseArrayImpl is complex - simplified version"
+    , "def traverseArrayImpl(apply_):"
+    , "    def step(map_):"
+    , "        def step2(pure_):"
+    , "            def step3(f):"
+    , "                def step4(xs):"
+    , "                    if len(xs) == 0:"
+    , "                        return pure_([])"
+    , "                    result = map_(lambda a: [a])(f(xs[0]))"
+    , "                    for x in xs[1:]:"
+    , "                        result = apply_(map_(lambda arr: lambda a: arr + [a])(result))(f(x))"
+    , "                    return result"
+    , "                return step4"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    ]
+  -- Data.Unfoldable
+  TIO.writeFile (dir </> "data_unfoldable_foreign.py") $ T.unlines
+    [ "# FFI for Data.Unfoldable"
+    , "def unfoldrArrayImpl(isNothing):"
+    , "    def step(fromJust):"
+    , "        def step2(fst_):"
+    , "            def step3(snd_):"
+    , "                def step4(f):"
+    , "                    def step5(b):"
+    , "                        result = []"
+    , "                        seed = b"
+    , "                        while True:"
+    , "                            maybe = f(seed)"
+    , "                            if isNothing(maybe):"
+    , "                                break"
+    , "                            pair = fromJust(maybe)"
+    , "                            result.append(fst_(pair))"
+    , "                            seed = snd_(pair)"
+    , "                        return result"
+    , "                    return step5"
+    , "                return step4"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    ]
+  -- Data.Unfoldable1
+  TIO.writeFile (dir </> "data_unfoldable1_foreign.py") $ T.unlines
+    [ "# FFI for Data.Unfoldable1"
+    , "def unfoldr1ArrayImpl(isNothing):"
+    , "    def step(fromJust):"
+    , "        def step2(fst_):"
+    , "            def step3(snd_):"
+    , "                def step4(f):"
+    , "                    def step5(b):"
+    , "                        result = []"
+    , "                        seed = b"
+    , "                        while True:"
+    , "                            pair = f(seed)"
+    , "                            result.append(fst_(pair))"
+    , "                            maybe_seed = snd_(pair)"
+    , "                            if isNothing(maybe_seed):"
+    , "                                break"
+    , "                            seed = fromJust(maybe_seed)"
+    , "                        return result"
+    , "                    return step5"
+    , "                return step4"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
+    ]
+  -- Data.FunctorWithIndex
+  TIO.writeFile (dir </> "data_functor_with_index_foreign.py") $ T.unlines
+    [ "# FFI for Data.FunctorWithIndex"
+    , "def mapWithIndexArray(f):"
+    , "    return lambda xs: [f(i)(x) for i, x in enumerate(xs)]"
+    ]
+  -- Data.FoldableWithIndex
+  TIO.writeFile (dir </> "data_foldable_with_index_foreign.py") $ T.unlines
+    [ "# FFI for Data.FoldableWithIndex"
+    , "def foldrWithIndexArray(f):"
+    , "    def step(init):"
+    , "        def step2(xs):"
+    , "            result = init"
+    , "            for i in range(len(xs) - 1, -1, -1):"
+    , "                result = f(i)(xs[i])(result)"
+    , "            return result"
+    , "        return step2"
+    , "    return step"
+    , ""
+    , "def foldlWithIndexArray(f):"
+    , "    def step(init):"
+    , "        def step2(xs):"
+    , "            result = init"
+    , "            for i, x in enumerate(xs):"
+    , "                result = f(i)(result)(x)"
+    , "            return result"
+    , "        return step2"
+    , "    return step"
+    ]
+  -- Data.TraversableWithIndex
+  TIO.writeFile (dir </> "data_traversable_with_index_foreign.py") $ T.unlines
+    [ "# FFI for Data.TraversableWithIndex"
+    , "def traverseWithIndexArray(apply_):"
+    , "    def step(map_):"
+    , "        def step2(pure_):"
+    , "            def step3(f):"
+    , "                def step4(xs):"
+    , "                    if len(xs) == 0:"
+    , "                        return pure_([])"
+    , "                    result = map_(lambda a: [a])(f(0)(xs[0]))"
+    , "                    for i, x in enumerate(xs[1:], 1):"
+    , "                        result = apply_(map_(lambda arr: lambda a: arr + [a])(result))(f(i)(x))"
+    , "                    return result"
+    , "                return step4"
+    , "            return step3"
+    , "        return step2"
+    , "    return step"
     ]
 
 -- | Python runtime support code
