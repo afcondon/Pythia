@@ -1,0 +1,74 @@
+package:
+  name: backend-python
+  dependencies:
+    - aff
+    - argonaut-core
+    - argonaut-codecs
+    - arrays
+    - backend-optimizer
+    - console
+    - control
+    - dodo-printer
+    - effect
+    - either
+    - foldable-traversable
+    - foreign-object
+    - lazy
+    - lists
+    - maybe
+    - newtype
+    - node-buffer
+    - node-fs
+    - node-path
+    - node-process
+    - ordered-collections
+    - partial
+    - prelude
+    - refs
+    - strings
+    - transformers
+    - tuples
+    - unsafe-coerce
+
+  build:
+    strict: true
+
+workspace:
+  extraPackages:
+    backend-optimizer:
+      git: "https://github.com/aristanetworks/purescript-backend-optimizer.git"
+      ref: "main"
+      dependencies:
+        - aff
+        - ansi
+        - argonaut
+        - argonaut-core
+        - arrays
+        - console
+        - control
+        - debug
+        - dodo-printer
+        - effect
+        - either
+        - foldable-traversable
+        - foreign-object
+        - integers
+        - language-cst-parser
+        - lazy
+        - lists
+        - maybe
+        - newtype
+        - node-buffer
+        - node-fs
+        - node-path
+        - node-process
+        - ordered-collections
+        - parallel
+        - partial
+        - prelude
+        - refs
+        - safe-coerce
+        - strings
+        - transformers
+        - tuples
+        - unsafe-coerce
