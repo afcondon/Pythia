@@ -1,5 +1,105 @@
 # PureScript Python Backend: Roadmap
 
+## Status Summary
+
+### Day 1 Complete ✓
+- CoreFn → Python code generation
+- Stack-safe tail recursion via optimizer directives (50K+ elements)
+- Native `Control.Monad.Asyncio` for async/await
+- Core library FFI (arrays, effects, refs, ST, foldable, traversable)
+- FFI signature canary for compile-time verification
+- Flask server demo, UMAP embedding explorer demo
+
+---
+
+## Practical Priorities
+
+### ESSENTIAL (blocking real use)
+
+| Priority | Feature | Why |
+|----------|---------|-----|
+| **E1** | Error messages with source locations | Currently runtime errors reference generated Python, not PureScript source |
+| **E2** | JSON support (`purescript-argonaut`) | Can't do web/API work without JSON |
+| **E3** | String library (`purescript-strings`) | Basic string manipulation |
+| **E4** | HTTP client (sync + async) | Network requests are table stakes |
+| **E5** | Testing framework | `purescript-spec` or similar |
+| **E6** | User documentation | "Getting Started" guide |
+
+### LOW-HANGING FRUIT (easy wins)
+
+| Priority | Feature | Why |
+|----------|---------|-----|
+| **L1** | File system FFI (`pathlib`) | Read/write files |
+| **L2** | DateTime FFI | Timestamps, formatting |
+| **L3** | Regex FFI (`re`) | Text processing |
+| **L4** | Environment variables | Configuration |
+| **L5** | Python type stubs (`.pyi`) | IDE autocompletion |
+| **L6** | Logging FFI | Debug output |
+
+### KILLER FEATURES (unique value)
+
+| Priority | Feature | Unique Value |
+|----------|---------|--------------|
+| **K1** | **Type-safe Pandas** | DataFrames with row types - catches column errors at compile time |
+| **K2** | **Type-safe NumPy** | NDArrays with shape/dtype in types |
+| **K3** | **Jupyter integration** | Type-checked notebook cells |
+| **K4** | **Servant-style web framework** | Type-safe REST APIs generating FastAPI/Flask |
+| **K5** | **ML pipeline types** | scikit-learn/PyTorch with typed fit/predict |
+| **K6** | **FFI generator from `.pyi`** | Auto-generate bindings from Python type stubs |
+
+### Why These Killer Features?
+
+**Type-safe Pandas** example:
+```purescript
+type UserRow = ( name :: String, age :: Int, email :: String )
+
+users :: DataFrame UserRow
+users = loadCSV "users.csv"
+
+-- Compile error: "address" not in UserRow
+bad = users # select (SProxy :: _ "address")
+
+-- Type-safe: returns Array String
+good = users # column (SProxy :: _ "name")
+```
+
+This catches errors that Python/mypy miss because DataFrame columns are typically untyped.
+
+**Servant-style API** example:
+```purescript
+type API =
+       "users" :> Get (Array User)
+  :<|> "users" :> Capture "id" Int :> Get User
+  :<|> "users" :> ReqBody User :> Post User
+
+-- Type-checked server implementation
+server :: Server API
+server = listUsers :<|> getUser :<|> createUser
+
+-- Generates FastAPI with automatic validation
+```
+
+---
+
+## What Makes PureScript-Python Unique
+
+| Feature | Python + mypy | Haskell | PureScript-Python |
+|---------|---------------|---------|-------------------|
+| Full type inference | Partial | ✓ | ✓ |
+| ADTs + exhaustive matching | ✗ | ✓ | ✓ |
+| Effect tracking | ✗ | ✓ | ✓ |
+| Row polymorphism | ✗ | Extension | ✓ Native |
+| Type classes | Protocol (limited) | ✓ | ✓ |
+| Python ecosystem | ✓ Native | FFI pain | ✓ Native |
+| Async/await | ✓ | Awkward | ✓ `Asyncio` |
+| Data science libs | ✓ | Poor | ✓ |
+
+**Sweet spot**: Type-safe orchestration of Python's data science ecosystem.
+
+---
+
+## Technical Roadmap
+
 This document outlines the performance considerations, FFI improvements, and future direction for the PureScript-Python backend.
 
 ## Vision: The Language Stack
