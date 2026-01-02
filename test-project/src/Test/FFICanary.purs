@@ -11,10 +11,13 @@ module Test.FFICanary where
 
 import Prelude
 
+import Control.Monad.Asyncio as Asyncio
+import Control.Monad.Asyncio (Asyncio, Task)
 import Control.Monad.Rec.Class (Step(..), tailRec)
 import Control.Monad.ST.Internal as ST
 import Data.Array as Array
 import Data.Array.ST as STArray
+import Data.Either (Either)
 import Data.Foldable (foldl, foldr)
 import Data.Maybe (Maybe)
 import Data.Traversable (traverse)
@@ -185,3 +188,41 @@ pushCanary = STArray.push
 
 popCanary :: forall r a. STArray.STArray r a -> ST.ST r (Maybe a)
 popCanary = STArray.pop
+
+--------------------------------------------------------------------------------
+-- Control.Monad.Asyncio
+-- Native Python async monad
+--------------------------------------------------------------------------------
+
+asyncioRunCanary :: forall a. Asyncio a -> Effect a
+asyncioRunCanary = Asyncio.run
+
+asyncioSleepCanary :: Number -> Asyncio Unit
+asyncioSleepCanary = Asyncio.sleep
+
+asyncioForkCanary :: forall a. Asyncio a -> Asyncio (Task a)
+asyncioForkCanary = Asyncio.fork
+
+asyncioAwaitCanary :: forall a. Task a -> Asyncio a
+asyncioAwaitCanary = Asyncio.await
+
+asyncioCancelCanary :: forall a. Task a -> Asyncio Unit
+asyncioCancelCanary = Asyncio.cancel
+
+asyncioRaceCanary :: forall a. Asyncio a -> Asyncio a -> Asyncio a
+asyncioRaceCanary = Asyncio.race
+
+asyncioAttemptCanary :: forall a. Asyncio a -> Asyncio (Either String a)
+asyncioAttemptCanary = Asyncio.attempt
+
+asyncioThrowErrorCanary :: forall a. String -> Asyncio a
+asyncioThrowErrorCanary = Asyncio.throwError
+
+asyncioCatchErrorCanary :: forall a. Asyncio a -> (String -> Asyncio a) -> Asyncio a
+asyncioCatchErrorCanary = Asyncio.catchError
+
+asyncioBracketCanary :: forall a b. Asyncio a -> (a -> Asyncio Unit) -> (a -> Asyncio b) -> Asyncio b
+asyncioBracketCanary = Asyncio.bracket
+
+asyncioLiftEffectCanary :: forall a. Effect a -> Asyncio a
+asyncioLiftEffectCanary = Asyncio.liftEffect
