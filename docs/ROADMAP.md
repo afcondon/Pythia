@@ -170,7 +170,7 @@ PureScript developers can:
 | **Thunks** | Lazy initialization for recursive bindings | Indirection on every access |
 | **Pattern matching** | Nested conditional expressions | Sequential evaluation |
 | **Dictionary passing** | Typeclass instances as explicit arguments | Extra function arguments |
-| **No TCO** | Python lacks tail-call optimization | Stack overflow on deep recursion |
+| ~~**No TCO**~~ | ✅ SOLVED: `tailRec` uses while-loop trampoline | Tested with 50K+ elements |
 
 ### FFI Ergonomics
 
@@ -178,7 +178,7 @@ PureScript developers can:
 |-------|-------------|
 | **Manual currying** | Python functions must be manually curried to match PureScript signatures |
 | **Effect wrapping** | Effect-returning functions need explicit thunk wrappers |
-| **No type checking** | No verification that Python implementations match PureScript types |
+| ~~**No type checking**~~ | ✅ SOLVED: FFI canary module catches signature drift at compile time |
 | **Boilerplate** | Large libraries require extensive manual wrapper code |
 
 ---
@@ -521,12 +521,15 @@ The tree benchmark has lower overhead (3.2x) because:
 - Less arithmetic dictionary lookups
 - Simpler pattern matching (just ADT constructors)
 
-### Recursion Limit
+### Recursion Limit ✅ SOLVED
 
-Python's default recursion limit (~1000) severely limits tail-recursive code:
-- `applyN inc 10000 0` causes stack overflow
-- Had to reduce to 100 iterations for benchmarks
-- **Trampoline TCO is essential for practical use**
+~~Python's default recursion limit (~1000) severely limits tail-recursive code.~~
+
+**Solution implemented:**
+- Optimizer directive `Control.Monad.Rec.Class.tailRec never` prevents inlining
+- Runtime provides while-loop trampoline implementation
+- Tested with 50,000+ element BST operations - no stack overflow
+- See `docs/TAILREC-INLINING-ISSUE.md` for details
 
 ### Profiling
 
@@ -544,19 +547,25 @@ Key metrics:
 
 ---
 
-## purescript-backend-optimizer Integration
+## purescript-backend-optimizer Integration ✅ DONE
 
-The most effective path to optimized output is integrating with [purescript-backend-optimizer](https://github.com/aristanetworks/purescript-backend-optimizer), the optimization toolkit used by `purs-backend-es` and `purescript-backend-erl`.
+The backend **already uses** [purescript-backend-optimizer](https://github.com/aristanetworks/purescript-backend-optimizer), the optimization toolkit used by `purs-backend-es` and `purescript-backend-erl`.
 
-### What It Provides
+### What We Get (already working)
 
 - **Aggressive inlining** - Subsumes existing PureScript compiler optimizations
-- **Uncurrying** - Tracks function arities across modules, generates both curried and uncurried versions
+- **Uncurrying** - Tracks function arities across modules
 - **Pattern matching optimization** - Eliminates redundant tests
-- **Better TCO** - Fires in more cases, supports mutual recursion
+- **Directive system** - Used for `tailRec never` to prevent inlining
 - **Lighter data encoding** - Plain objects with string/int tags
 
-### Integration Options
+### Custom Python Optimizations Added
+
+- **Stack-safe tailRec** - While-loop trampoline via directive + runtime FFI
+- **Asyncio monad** - Native Python async/await
+- **FFI canary** - Compile-time signature verification
+
+### Remaining Optimization Opportunities
 
 | Approach | Effort | Benefit |
 |----------|--------|---------|
