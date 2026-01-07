@@ -15,10 +15,13 @@ package:
     - lazy
     - lists
     - maybe
+    - nullable
     - numbers
     - ordered-collections
     - partial
     - prelude
+    - psd3-selection
+    - psd3-tree
     - refs
     - st
     - strings
@@ -27,4 +30,10 @@ package:
 workspace:
   packageSet:
     registry: 57.1.0
-  extraPackages: {}
+  extraPackages:
+    psd3-selection:
+      path: "../../visualisation libraries/purescript-psd3-selection"
+    psd3-tree:
+      path: "../../visualisation libraries/purescript-psd3-tree"
+    psd3-graph:
+      path: "../../visualisation libraries/purescript-psd3-graph"
