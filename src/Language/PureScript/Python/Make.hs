@@ -261,11 +261,19 @@ generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleD
               patResults = case binders of
                 [binder] -> [generatePattern recNames "__v__" binder]
                 _ -> zipWith (\i b -> generatePattern recNames ("__v__[" <> T.pack (show i) <> "]") b) [(0::Int)..] binders
+              -- Extract conditions (for constructor tag checks) and bindings separately
+              conds = filter (/= "True") $ map fst patResults
               allBindings = concatMap snd patResults
+              combinedCond = if null conds then "True" else T.intercalate " and " conds
               guardedCode = generateGuards guards
-          in if null allBindings
-             then guardedCode
-             else "(lambda: (" <> T.intercalate ", " allBindings <> ", " <> guardedCode <> ")[-1])()"
+              -- Wrap with bindings if needed
+              withBindings = if null allBindings
+                             then guardedCode
+                             else "(lambda: (" <> T.intercalate ", " allBindings <> ", " <> guardedCode <> ")[-1])()"
+          -- Wrap with constructor tag check if needed
+          in if combinedCond == "True"
+             then withBindings
+             else "((" <> withBindings <> ") if " <> combinedCond <> " else " <> rest <> ")"
         Right body ->
           case binders of
             -- Single binder patterns
