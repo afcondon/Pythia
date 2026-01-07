@@ -214,9 +214,9 @@ def test_show(results):
         assert result in ["'hello'", '"hello"']  # Accept either quote style
         results.ok("showStringImpl")
 
-        # Test showArrayImpl
+        # Test showArrayImpl (no spaces to match JS/PureScript semantics)
         arr_shower = S.showArrayImpl(str)
-        assert arr_shower([1, 2, 3]) == "[1, 2, 3]"
+        assert arr_shower([1, 2, 3]) == "[1,2,3]"
         results.ok("showArrayImpl")
 
     except Exception as e:

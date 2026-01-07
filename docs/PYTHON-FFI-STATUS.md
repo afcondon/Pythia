@@ -103,6 +103,10 @@ This would help library authors write portable PureScript code.
 
 **90 tests passing** covering all implemented FFI modules.
 
+**Array tests passing** - comprehensive test suite in `Test.Arrays`
+
+**Prelude tests passing** - comprehensive test suite in `Test.Prelude`
+
 Run the test harness:
 ```bash
 cd test-project
@@ -304,13 +308,31 @@ python3 -c "import main; main.main()"
    - `purescript-ordered-collections` - Pure PureScript, no FFI needed
    - Extended `mkFn/runFn` to support 6-10 arguments for Map internals
 
+8. [x] Fix guarded pattern matching code generation bug
+   - Constructor tag checks were missing for guarded patterns
+   - Fixed in `Make.hs:generateAlt` for `Left guards` case
+
+9. [x] Run purescript-arrays tests on Python backend
+   - Created comprehensive `Test.Arrays` module
+   - All tests pass including: construction, indexing, cons/snoc, uncons/unsnoc, transformations, folds, find operations, modification, sorting, take/drop, span/group, zip
+
+10. [x] Run purescript-prelude tests on Python backend
+    - Created `Test.Prelude` module covering Eq, Ord, Show, Semiring, Ring, EuclideanRing, Boolean ops, function composition, Functor, Apply, Applicative, Bind, Maybe, Either, Tuple, Semigroup, Monoid
+    - Fixed `showStringImpl` to use double quotes (matching JS semantics)
+    - Fixed `showArrayImpl` to not add spaces after commas
+    - All tests pass
+
+11. [x] Implement record pattern matching in purepy
+    - Added `ObjectLiteral` and `ArrayLiteral` pattern matching to `Make.hs`
+    - Enables destructuring records like `{ head: h, tail: t }` in case expressions
+
 ### Future Work
-8. [ ] Run purescript-arrays tests on Python backend (blocked by purepy code generation issue)
-9. [ ] Run purescript-prelude tests on Python backend
-10. [ ] Implement remaining Priority 3 packages
+12. [ ] Priority 3 packages - Python ecosystem integration
+    - Database bindings (SQLAlchemy, asyncpg)
+    - HTTP client (aiohttp, httpx)
+    - File system async operations
+    - Additional data science integrations (numpy, pandas)
 
 ### Known Issues
-
-**PureScript Test Integration:** The purepy compiler has a code generation issue with record pattern matching that prevents running compiled PureScript tests directly. The standalone Python FFI test harness (`test_ffi.py`) provides comprehensive coverage in the meantime.
 
 **FFI File Regeneration:** Running `purepy` overwrites FFI files in `output-py-new`. Keep authoritative copies in `ffi-py/` directory and copy after regeneration.

@@ -313,7 +313,7 @@ generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleD
     generatePattern _ _ (CoreFn.NullBinder _) =
       -- Null binder: always matches, binds nothing
       ("True", [])
-    generatePattern _ scrutinee (CoreFn.LiteralBinder _ lit) =
+    generatePattern recNames scrutinee (CoreFn.LiteralBinder _ lit) =
       -- Literal binder: compare with literal
       case lit of
         CoreFn.NumericLiteral (Left n) ->
@@ -330,10 +330,28 @@ generateModulePy cfModule = T.unlines $ map (generateBinding []) (CoreFn.moduleD
           (scrutinee <> " == True", [])
         CoreFn.BooleanLiteral False ->
           (scrutinee <> " == False", [])
-        CoreFn.ArrayLiteral _ ->
-          ("True", [])  -- TODO: array pattern matching
-        CoreFn.ObjectLiteral _ ->
-          ("True", [])  -- TODO: object pattern matching
+        CoreFn.ArrayLiteral binders ->
+          -- Array pattern matching: check length and match each element
+          let lenCheck = scrutinee <> " is not None and len(" <> scrutinee <> ") == " <> T.pack (show (length binders))
+              elemPatterns = zipWith (\i b -> generatePattern recNames (scrutinee <> "[" <> T.pack (show i) <> "]") b) [(0::Int)..] binders
+              elemConds = filter (/= "True") $ map fst elemPatterns
+              elemBindings = concatMap snd elemPatterns
+              combinedCond = if null elemConds
+                             then lenCheck
+                             else lenCheck <> " and " <> T.intercalate " and " elemConds
+          in (combinedCond, elemBindings)
+        CoreFn.ObjectLiteral fields ->
+          -- Object/record pattern matching: extract each field and match
+          let fieldPatterns = map (\(fieldName, binder) ->
+                let fieldStr = case decodeString fieldName of
+                      Just s -> s
+                      Nothing -> "unknown"
+                    fieldAccess = scrutinee <> "[\"" <> fieldStr <> "\"]"
+                in generatePattern recNames fieldAccess binder) fields
+              fieldConds = filter (/= "True") $ map fst fieldPatterns
+              fieldBindings = concatMap snd fieldPatterns
+              combinedCond = if null fieldConds then "True" else T.intercalate " and " fieldConds
+          in (combinedCond, fieldBindings)
     generatePattern recNames scrutinee (CoreFn.ConstructorBinder ann _tyName (P.Qualified _ (P.ProperName ctorName)) subBinders) =
       -- Constructor binder: check tag and recursively match fields
       case ann of

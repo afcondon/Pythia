@@ -2,10 +2,25 @@ package:
   name: test-hello
   dependencies:
     - arrays
+    - assert
     - console
     - effect
+    - either
+    - exceptions
+    - foldable-traversable
+    - integers
+    - lazy
+    - lists
     - maybe
+    - numbers
+    - ordered-collections
+    - partial
     - prelude
+    - refs
+    - st
+    - strings
+    - tailrec
+    - tuples
 workspace:
   packageSet:
     registry: 57.1.0
