@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PurePy Live Streaming Chart</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f0f23;
+      color: #ccc;
+      padding: 20px;
+    }
+    h1 { color: #7c3aed; margin-bottom: 5px; }
+    .subtitle { color: #666; margin-bottom: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .controls {
+      display: flex;
+      gap: 15px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    button.primary { background: #7c3aed; color: white; }
+    button.primary:hover { background: #6d28d9; }
+    button.secondary { background: #374151; color: white; }
+    button.secondary:hover { background: #4b5563; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status {
+      padding: 8px 15px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    .status.connected { background: #065f46; color: #6ee7b7; }
+    .status.disconnected { background: #7f1d1d; color: #fca5a5; }
+    .status.connecting { background: #78350f; color: #fcd34d; }
+    .stats {
+      display: flex;
+      gap: 30px;
+      margin-left: auto;
+      font-size: 14px;
+    }
+    .stat { color: #888; }
+    .stat span { color: #fff; font-weight: 600; }
+    .chart-container {
+      background: #1a1a2e;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .chart-title {
+      font-size: 16px;
+      color: #fff;
+      margin-bottom: 15px;
+    }
+    svg {
+      display: block;
+    }
+    .line {
+      fill: none;
+      stroke-width: 2;
+    }
+    .line.primary { stroke: #7c3aed; }
+    .line.secondary { stroke: #06b6d4; }
+    .axis path, .axis line { stroke: #333; }
+    .axis text { fill: #888; font-size: 12px; }
+    .grid line { stroke: #222; stroke-opacity: 0.8; }
+    .grid path { stroke-width: 0; }
+    .legend {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin-top: 10px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+    .legend-color {
+      width: 20px;
+      height: 3px;
+      border-radius: 2px;
+    }
+    .tooltip {
+      position: absolute;
+      background: rgba(0,0,0,0.9);
+      color: #fff;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Live Streaming Chart</h1>
+    <p class="subtitle">Real-time data from PureScript/Python WebSocket server</p>
+
+    <div class="controls">
+      <button id="connectBtn" class="primary">Connect</button>
+      <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+      <button id="clearBtn" class="secondary">Clear</button>
+      <div id="status" class="status disconnected">Disconnected</div>
+      <div class="stats">
+        <div class="stat">Points: <span id="pointCount">0</span></div>
+        <div class="stat">Rate: <span id="dataRate">0</span>/s</div>
+        <div class="stat">Latest: <span id="latestValue">-</span></div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">Signal Values (Rolling Window)</div>
+      <svg id="chart"></svg>
+      <div class="legend">
+        <div class="legend-item">
+          <div class="legend-color" style="background: #7c3aed;"></div>
+          <span>Primary (sine + noise)</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-color" style="background: #06b6d4;"></div>
+          <span>Secondary (cosine)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+
+  <script>
+    // Configuration
+    const MAX_POINTS = 200;  // Rolling window size
+    const WS_URL = 'ws://localhost:8766';
+
+    // State
+    let ws = null;
+    let data = [];
+    let pointCount = 0;
+    let lastSecondCount = 0;
+    let dataRate = 0;
+
+    // DOM elements
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const statusDiv = document.getElementById('status');
+    const pointCountSpan = document.getElementById('pointCount');
+    const dataRateSpan = document.getElementById('dataRate');
+    const latestValueSpan = document.getElementById('latestValue');
+
+    // D3 Setup
+    const margin = { top: 20, right: 30, bottom: 40, left: 50 };
+    const width = 1100 - margin.left - margin.right;
+    const height = 400 - margin.top - margin.bottom;
+
+    const svg = d3.select('#chart')
+      .attr('width', width + margin.left + margin.right)
+      .attr('height', height + margin.top + margin.bottom)
+      .append('g')
+      .attr('transform', `translate(${margin.left},${margin.top})`);
+
+    // Scales
+    const xScale = d3.scaleLinear().range([0, width]);
+    const yScale = d3.scaleLinear().domain([-2, 2]).range([height, 0]);
+
+    // Grid
+    svg.append('g')
+      .attr('class', 'grid')
+      .attr('transform', `translate(0,${height})`)
+      .call(d3.axisBottom(xScale).tickSize(-height).tickFormat(''));
+
+    svg.append('g')
+      .attr('class', 'grid')
+      .call(d3.axisLeft(yScale).tickSize(-width).tickFormat(''));
+
+    // Axes
+    const xAxis = svg.append('g')
+      .attr('class', 'axis x-axis')
+      .attr('transform', `translate(0,${height})`);
+
+    const yAxis = svg.append('g')
+      .attr('class', 'axis y-axis')
+      .call(d3.axisLeft(yScale));
+
+    // X-axis label
+    svg.append('text')
+      .attr('x', width / 2)
+      .attr('y', height + 35)
+      .attr('fill', '#666')
+      .attr('text-anchor', 'middle')
+      .text('Time (seconds)');
+
+    // Y-axis label
+    svg.append('text')
+      .attr('transform', 'rotate(-90)')
+      .attr('x', -height / 2)
+      .attr('y', -40)
+      .attr('fill', '#666')
+      .attr('text-anchor', 'middle')
+      .text('Value');
+
+    // Line generators
+    const linePrimary = d3.line()
+      .x(d => xScale(d.time))
+      .y(d => yScale(d.values.primary))
+      .curve(d3.curveMonotoneX);
+
+    const lineSecondary = d3.line()
+      .x(d => xScale(d.time))
+      .y(d => yScale(d.values.secondary))
+      .curve(d3.curveMonotoneX);
+
+    // Paths
+    const pathPrimary = svg.append('path')
+      .attr('class', 'line primary');
+
+    const pathSecondary = svg.append('path')
+      .attr('class', 'line secondary');
+
+    // Update chart
+    function updateChart() {
+      if (data.length === 0) return;
+
+      // Update x scale domain
+      const timeExtent = d3.extent(data, d => d.time);
+      xScale.domain(timeExtent);
+
+      // Update x axis
+      xAxis.call(d3.axisBottom(xScale).ticks(10));
+
+      // Update lines
+      pathPrimary.datum(data).attr('d', linePrimary);
+      pathSecondary.datum(data).attr('d', lineSecondary);
+
+      // Update stats
+      const latest = data[data.length - 1];
+      latestValueSpan.textContent = latest.values.primary.toFixed(3);
+    }
+
+    // Status updates
+    function setStatus(status) {
+      statusDiv.className = `status ${status}`;
+      statusDiv.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    }
+
+    // Data rate calculation
+    setInterval(() => {
+      dataRate = pointCount - lastSecondCount;
+      lastSecondCount = pointCount;
+      dataRateSpan.textContent = dataRate;
+    }, 1000);
+
+    // WebSocket connection
+    function connect() {
+      setStatus('connecting');
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        setStatus('connected');
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+      };
+
+      ws.onclose = () => {
+        setStatus('disconnected');
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        ws = null;
+      };
+
+      ws.onerror = () => {
+        setStatus('disconnected');
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'data') {
+            // Add to data array
+            data.push(msg);
+            pointCount++;
+            pointCountSpan.textContent = pointCount;
+
+            // Maintain rolling window
+            if (data.length > MAX_POINTS) {
+              data.shift();
+            }
+
+            // Update visualization
+            updateChart();
+          }
+        } catch (e) {
+          console.error('Parse error:', e);
+        }
+      };
+    }
+
+    function disconnect() {
+      if (ws) {
+        ws.close(1000, 'User disconnected');
+      }
+    }
+
+    function clearData() {
+      data = [];
+      pointCount = 0;
+      lastSecondCount = 0;
+      pointCountSpan.textContent = '0';
+      latestValueSpan.textContent = '-';
+      pathPrimary.attr('d', '');
+      pathSecondary.attr('d', '');
+    }
+
+    // Event listeners
+    connectBtn.addEventListener('click', connect);
+    disconnectBtn.addEventListener('click', disconnect);
+    clearBtn.addEventListener('click', clearData);
+  </script>
+</body>
+</html>
