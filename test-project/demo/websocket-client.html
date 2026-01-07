@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PurePy WebSocket Demo</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+    }
+    h1 { color: #7c3aed; margin-bottom: 0; }
+    .subtitle { color: #888; margin-top: 5px; }
+    .status {
+      padding: 10px 15px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-weight: 500;
+    }
+    .status.connected { background: #065f46; color: #6ee7b7; }
+    .status.disconnected { background: #7f1d1d; color: #fca5a5; }
+    .status.connecting { background: #78350f; color: #fcd34d; }
+    #messages {
+      background: #0f0f23;
+      border: 1px solid #333;
+      border-radius: 8px;
+      height: 400px;
+      overflow-y: auto;
+      padding: 15px;
+      margin-bottom: 15px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 14px;
+    }
+    .message {
+      padding: 5px 0;
+      border-bottom: 1px solid #222;
+    }
+    .message.sent { color: #60a5fa; }
+    .message.received { color: #34d399; }
+    .message.system { color: #fbbf24; font-style: italic; }
+    .message.error { color: #f87171; }
+    .input-row {
+      display: flex;
+      gap: 10px;
+    }
+    input[type="text"] {
+      flex: 1;
+      padding: 12px 15px;
+      border: 1px solid #333;
+      border-radius: 8px;
+      background: #0f0f23;
+      color: #fff;
+      font-size: 16px;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #7c3aed;
+    }
+    button {
+      padding: 12px 25px;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: background 0.2s;
+    }
+    button.primary {
+      background: #7c3aed;
+      color: white;
+    }
+    button.primary:hover { background: #6d28d9; }
+    button.secondary {
+      background: #374151;
+      color: white;
+    }
+    button.secondary:hover { background: #4b5563; }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .url-input {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    .url-input input { flex: 1; }
+  </style>
+</head>
+<body>
+  <h1>PurePy WebSocket Demo</h1>
+  <p class="subtitle">Bidirectional communication between PureScript frontend and Python backend</p>
+
+  <div class="url-input">
+    <input type="text" id="wsUrl" value="ws://localhost:8765" placeholder="WebSocket URL">
+  </div>
+
+  <div class="controls">
+    <button id="connectBtn" class="primary">Connect</button>
+    <button id="disconnectBtn" class="secondary" disabled>Disconnect</button>
+  </div>
+
+  <div id="status" class="status disconnected">Disconnected</div>
+
+  <div id="messages"></div>
+
+  <div class="input-row">
+    <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+    <button id="sendBtn" class="primary" disabled>Send</button>
+  </div>
+
+  <script>
+    let ws = null;
+    const messagesDiv = document.getElementById('messages');
+    const statusDiv = document.getElementById('status');
+    const messageInput = document.getElementById('messageInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const wsUrlInput = document.getElementById('wsUrl');
+
+    function addMessage(text, type = 'received') {
+      const div = document.createElement('div');
+      div.className = `message ${type}`;
+      const time = new Date().toLocaleTimeString();
+      div.textContent = `[${time}] ${text}`;
+      messagesDiv.appendChild(div);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function setStatus(status) {
+      statusDiv.className = `status ${status}`;
+      statusDiv.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+    }
+
+    function connect() {
+      const url = wsUrlInput.value;
+      addMessage(`Connecting to ${url}...`, 'system');
+      setStatus('connecting');
+
+      ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        addMessage('Connected!', 'system');
+        setStatus('connected');
+        connectBtn.disabled = true;
+        disconnectBtn.disabled = false;
+        messageInput.disabled = false;
+        sendBtn.disabled = false;
+        messageInput.focus();
+      };
+
+      ws.onclose = (event) => {
+        addMessage(`Disconnected (code: ${event.code}, reason: ${event.reason || 'none'})`, 'system');
+        setStatus('disconnected');
+        connectBtn.disabled = false;
+        disconnectBtn.disabled = true;
+        messageInput.disabled = true;
+        sendBtn.disabled = true;
+        ws = null;
+      };
+
+      ws.onmessage = (event) => {
+        addMessage(event.data, 'received');
+      };
+
+      ws.onerror = () => {
+        addMessage('WebSocket error occurred', 'error');
+      };
+    }
+
+    function disconnect() {
+      if (ws) {
+        ws.close(1000, 'User disconnected');
+      }
+    }
+
+    function sendMessage() {
+      const msg = messageInput.value.trim();
+      if (msg && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(msg);
+        addMessage(`You: ${msg}`, 'sent');
+        messageInput.value = '';
+      }
+    }
+
+    connectBtn.addEventListener('click', connect);
+    disconnectBtn.addEventListener('click', disconnect);
+    sendBtn.addEventListener('click', sendMessage);
+    messageInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    // Auto-connect on page load (optional)
+    // connect();
+  </script>
+</body>
+</html>
