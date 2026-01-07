@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Minimal WebSocket Test</title>
+</head>
+<body>
+  <h1>Minimal WebSocket Test</h1>
+  <button onclick="connect()">Connect</button>
+  <button onclick="disconnect()">Disconnect</button>
+  <pre id="log"></pre>
+
+  <script>
+    let ws = null;
+    const log = (msg) => {
+      console.log(msg);
+      document.getElementById('log').textContent += msg + '\n';
+    };
+
+    function connect() {
+      log('Connecting to ws://localhost:8766...');
+      ws = new WebSocket('ws://localhost:8766');
+
+      ws.onopen = () => log('OPEN');
+      ws.onclose = (e) => log(`CLOSE: ${e.code} ${e.reason}`);
+      ws.onerror = () => log('ERROR');
+      ws.onmessage = (e) => log(`MSG: ${e.data}`);
+    }
+
+    function disconnect() {
+      if (ws) ws.close();
+    }
+  </script>
+</body>
+</html>

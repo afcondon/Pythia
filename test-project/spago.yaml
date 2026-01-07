@@ -1,6 +1,7 @@
 package:
   name: test-hello
   dependencies:
+    - aff
     - arrays
     - assert
     - console
@@ -8,6 +9,8 @@ package:
     - either
     - exceptions
     - foldable-traversable
+    - halogen
+    - halogen-subscriptions
     - integers
     - lazy
     - lists
