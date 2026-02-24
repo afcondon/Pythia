@@ -87,15 +87,21 @@ def add(x):
     return lambda y: x + y
 ```
 
-### Future Cross-Backend Documentation
+### Cross-Backend Testing Infrastructure
 
-We plan to contribute a comprehensive cross-backend comparison covering:
-- purescript-python (this backend)
-- purerl (Erlang backend)
-- purescript-native (C++ backend)
-- purescm (Scheme backend)
+*Added 2026-02-24*
 
-This would help library authors write portable PureScript code.
+We now have cross-backend testing that compares Python output against the JS reference backend:
+
+- **Test modules**: `test-project/src/Test/CrossBackend/{Strings,Numbers,ADTs,Effects,Arrays}.purs`
+- **Orchestrator**: `test-project/cross_backend_test.py` — runs each module via `node` and `python3`, diffs output, produces JSONL results
+- **Benchmarks**: `test-project/bench/cross_backend_bench.py` — runs benchmarks on both backends with comparison table
+
+Known string divergences (non-BMP characters) are documented in `docs/UTF16-STRING-AUDIT.md`.
+
+### Cross-Backend Comparison Document
+
+A comprehensive cross-backend comparison covering purerl, purescm/purekt, purepy, and .NET has been published at `purescript-polyglot/docs/kb/research/purescript-alternative-backends-comparison.md`. This covers architecture, data representation, currying strategies, TCO, FFI patterns, string semantics, and lessons for new backends.
 
 ## Current FFI Coverage
 

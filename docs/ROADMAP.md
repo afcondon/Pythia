@@ -618,6 +618,75 @@ For full uncurrying with cross-module arity tracking, a PureScript rewrite is re
 
 ---
 
+## Lessons from the Racket Backend Port Report
+
+*Added 2026-02-24, based on cross-backend analysis of purerl, purescm/purekt, purepy, and .NET feasibility.*
+
+A detailed study of all PureScript alternative backends surfaced several lessons that apply directly to purepy's roadmap. See the full comparison document at `purescript-polyglot/docs/kb/research/purescript-alternative-backends-comparison.md`.
+
+### Key Takeaways
+
+#### 1. Cross-Backend Testing as Standard Practice
+
+The Racket port report demonstrated that running the same PureScript code on both the JS reference backend and the alternative backend, then diffing stdout, catches semantic divergences that unit tests miss. We now have:
+
+- **`test-project/src/Test/CrossBackend/`** — Five PureScript test modules (Strings, Numbers, ADTs, Effects, Arrays) printing structured `TEST <name>: <value>` lines
+- **`test-project/cross_backend_test.py`** — Orchestrator that runs each module via `node` and `python3`, diffs output, flags divergences as known or unexpected, produces JSONL results
+
+This should be run as part of any FFI change.
+
+#### 2. Dependency-Wave FFI Expansion
+
+Rather than implementing FFI modules ad hoc, the Racket report's wave-ordered approach is more disciplined:
+
+```
+Wave 1: prelude, effect, console         ← done
+Wave 2: maybe, either, tuples            ← done (pure PureScript)
+Wave 3: arrays, strings, foldable        ← done
+Wave 4: refs, st, exceptions             ← done
+Wave 5: json, regex, http                ← next
+```
+
+Each wave should be tested with cross-backend tests before starting the next.
+
+#### 3. String Semantics: UTF-16 Divergence
+
+The `Data.String.CodeUnits` module operates on UTF-16 code units (matching JavaScript). Python strings are Unicode code points. This causes silent divergences for non-BMP characters (emoji, CJK Extension B, etc.).
+
+Full analysis in `docs/UTF16-STRING-AUDIT.md`. Current decision: accept divergence and document it. Fix incrementally if users report issues.
+
+#### 4. ADT Representation: Future Upgrade Path
+
+The Racket report and purerl both use more structured ADT representations than purepy's current tuples. A future upgrade path:
+
+```python
+# Current: tuples
+Just = lambda a: ("Just", a)
+
+# Future: __slots__ classes with __match_args__ (Python 3.10+)
+class Just:
+    __slots__ = ('value',)
+    __match_args__ = ('value',)
+    def __init__(self, value):
+        self.value = value
+```
+
+This requires benchmarks (now available via `bench/cross_backend_bench.py`) for before/after measurement.
+
+#### 5. Platform-Native Async is Correct
+
+Every alternative backend that has gotten far enough to need async has built a platform-native async monad rather than porting Aff. Our `Control.Monad.Asyncio` approach (wrapping Python's native asyncio) is validated by this pattern.
+
+### Cross-Backend Benchmark Infrastructure
+
+The new `bench/cross_backend_bench.py` extends the existing harness to:
+- Run benchmarks on both JS (node) and Python
+- Compare against hand-written Python equivalents
+- Emit JSONL for tracking over time
+- Output comparison table with Py/JS ratio
+
+---
+
 ## References
 
 - [purescript-backend-optimizer](https://github.com/aristanetworks/purescript-backend-optimizer) - Common optimization infrastructure
@@ -625,3 +694,5 @@ For full uncurrying with cross-module arity tracking, a PureScript rewrite is re
 - [Cython](https://cython.org/) - C extensions for Python
 - [Numba](https://numba.pydata.org/) - JIT compiler for numeric Python
 - [PyPy](https://www.pypy.org/) - Fast Python implementation with JIT
+- [Cross-Backend Comparison](../../purescript-polyglot/docs/kb/research/purescript-alternative-backends-comparison.md) - Full backend comparison document
+- [UTF-16 String Audit](UTF16-STRING-AUDIT.md) - String semantics divergence analysis

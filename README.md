@@ -104,6 +104,34 @@ def myFunction(x):
     return x * 2
 ```
 
+## Testing
+
+### FFI Tests
+
+```bash
+cd test-project
+python3 test_ffi.py         # 90+ FFI unit tests
+```
+
+### Cross-Backend Tests
+
+Compare Python backend output against the JS reference backend:
+
+```bash
+cd test-project
+python3 cross_backend_test.py    # Run same PureScript on node + python3, diff output
+```
+
+This produces JSONL to stdout and a summary table to stderr. Known string divergences (non-BMP/emoji characters) are flagged as expected. See `docs/UTF16-STRING-AUDIT.md` for details.
+
+### Benchmarks
+
+```bash
+cd test-project
+python3 bench/run_benchmarks.py          # PureScript-Python vs hand-written Python
+python3 bench/cross_backend_bench.py     # JS vs Python vs hand-written, with JSONL tracking
+```
+
 ## Development
 
 ### Project Structure
