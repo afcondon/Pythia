@@ -1,0 +1,11 @@
+# Cross-backend benchmark workspace. Same arrangement as test-suite: builds
+# the normal JS output, the runner adds --codegen corefn and drives purepy,
+# then times the same exported workloads on Node, CPython, and against
+# hand-written Python equivalents.
+package:
+  name: purepy-bench
+  dependencies:
+    - prelude
+workspace:
+  packageSet:
+    registry: 57.1.0

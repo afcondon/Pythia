@@ -155,24 +155,39 @@ generateModulePy cfModule =
       --   1. TCO: all self-refs are saturated tail calls -> dispatch loop,
       --      plain assignment, no thunk (other-member refs resolve at call
       --      time, or through _lazy_X() for thunked members).
-      --   2. Smart thunk partition: only bindings that reference remaining
-      --      group members go through the lazy-thunk runtime.
+      --   2. Function bindings (RHS is a lambda chain): plain assignment,
+      --      no thunk. A lambda evaluates nothing at definition time, and
+      --      Python resolves module-global names at CALL time, so self and
+      --      mutual recursion through function bodies needs no indirection.
+      --      (A per-call _lazy_f() here is pure overhead - measured ~25%
+      --      of fib's runtime.)
+      --   3. Smart thunk partition for VALUE bindings: only those that
+      --      reference remaining group members go through the lazy-thunk
+      --      runtime.
       let tcoAnnotated = [ (b, tryTco (identName ident) expr)
                          | b@((_, ident), expr) <- bindings ]
           tcoBindings = [ (ident, ps, body)
                         | (((_, ident), _), Just (ps, body)) <- tcoAnnotated ]
           plainBindings = [ b | (b, Nothing) <- tcoAnnotated ]
-          allNames = Set.fromList [identName ident | ((_, ident), _) <- plainBindings]
+          isFunction (_, expr) = case expr of
+            CoreFn.Abs {} -> True
+            _ -> False
+          (functions, values) = partition isFunction plainBindings
+          valueNames = Set.fromList [identName ident | ((_, ident), _) <- values]
           needsThunk ((_, _ident), expr) =
-            not $ Set.null $ Set.intersection (collectLocalRefs currentModule expr) allNames
-          (recursive, nonRecursive) = partition needsThunk plainBindings
+            not $ Set.null $ Set.intersection (collectLocalRefs currentModule expr) valueNames
+          (recursive, nonRecursive) = partition needsThunk values
           recNames = [identName ident | ((_, ident), _) <- recursive]
       tcoDefs <- mapM (\(ident, ps, body) -> do
                         rhs <- generateTcoExpr Set.empty recNames (identName ident) ps body
                         pure (identName ident <> " = " <> rhs))
                       tcoBindings
+      funDefs <- mapM (\((_, ident), expr) -> do
+                        rhs <- generateInlineAbs Set.empty recNames expr
+                        pure (identName ident <> " = " <> rhs))
+                      functions
       nonRecDefs <- mapM (\((_, ident), expr) -> do
-                           rhs <- generateInlineAbs Set.empty [] expr
+                           rhs <- generateInlineAbs Set.empty recNames expr
                            pure (identName ident <> " = " <> rhs))
                          nonRecursive
       lazyDefs <- mapM (\((_, ident), expr) -> do
@@ -185,7 +200,7 @@ generateModulePy cfModule =
       let valueDefs = [ identName ident <> " = _lazy_" <> identName ident <> "()"
                       | ((_, ident), _) <- recursive
                       ]
-      pure (T.unlines (tcoDefs ++ nonRecDefs ++ lazyDefs ++ valueDefs))
+      pure (T.unlines (tcoDefs ++ funDefs ++ nonRecDefs ++ lazyDefs ++ valueDefs))
 
     identName :: P.Ident -> T.Text
     identName = identToPyName
