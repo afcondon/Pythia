@@ -1,0 +1,5 @@
+output/
+output-py/
+.spago/
+__pycache__/
+node_modules/
