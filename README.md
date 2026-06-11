@@ -83,7 +83,7 @@ per-backend divergence ledgers.
 - `docs/design-decisions/` — ADRs (family format)
 - `docs/` — design direction + carried-over analyses (UTF-16 audit,
   tailrec notes, Aff/asyncio design)
-- `attic/` — the repo's first incarnation (two earlier compiler
-  implementations, retained read-only per ADR-0001 until retired)
 - `test-project/`, `bundle/`, `ci/` — first-incarnation artifacts,
-  pending cleanup
+  pending cleanup. (The first incarnation's two compiler implementations
+  were retired to git history per ADR-0001 — see the `attic/` removal
+  commit.)
