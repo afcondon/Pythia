@@ -1,0 +1,21 @@
+# Grid Explorer - the second of the first incarnation's showcase demos
+# (hypo-punter/ge-server), rebuilt on the rebooted backend. PureScript
+# orchestrates (typed routes, typed network/cascade/contingency shapes);
+# pandapower does the electrical engineering (AC power flow, N-1
+# contingency, cascading-failure simulation on the IEEE test cases).
+#
+# Build:  spago build && stack exec --stack-yaml ../../stack.yaml purepy -- output output-py
+# Run:    python3 output-py        (Flask on :3022)
+package:
+  name: grid-explorer
+  dependencies:
+    - prelude
+    - effect
+    - console
+    - functions
+    - maybe
+workspace:
+  packageSet:
+    registry: 57.1.0
+  backend:
+    cmd: "true"
