@@ -1,0 +1,21 @@
+# UMAP Embedding Explorer - the first incarnation's flagship demo, rebuilt
+# on the rebooted backend. PureScript orchestrates (typed routes, typed
+# UMAP config, typed response shapes); Python's engines do the work
+# (Flask serves, umap-learn projects, numpy underneath) - the
+# python-shaped-libraries doctrine in miniature.
+#
+# Build:  spago build && stack exec --stack-yaml ../../stack.yaml purepy -- output output-py
+# Run:    python3 output-py        (Flask on :8081)
+# View:   open demo/embedding-explorer.html
+package:
+  name: embedding-explorer
+  dependencies:
+    - prelude
+    - effect
+    - console
+    - functions
+workspace:
+  packageSet:
+    registry: 57.1.0
+  backend:
+    cmd: "true"
