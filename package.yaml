@@ -1,14 +1,17 @@
 name: purescript-python
-version: "0.0.1"
+version: "0.0.2"
 synopsis: PureScript Programming Language Python Back-end
 description:
-  Python backend for PureScript (a small strongly, statically typed programming language with expressive
-  types, inspired by Haskell).
+  Python backend for PureScript. Consumes CoreFn JSON (purs --codegen corefn)
+  and emits Python source - one Python module per PureScript module plus a
+  small runtime. Sibling of purescript-julia (Jurist) in the
+  polyglot-PureScript backends effort; rebooted on the Jurist architecture
+  per docs/design-decisions/0001.
 category: Language
-author: Your Name
-copyright: (c) 2025 Your Name
+author: Andrew Condon
+copyright: (c) 2026 Andrew Condon
 license: BSD3
-github: your-username/purescript-python
+github: afcondon/purescript-python
 extra-source-files:
   - stack.yaml
   - README.md
@@ -36,27 +39,7 @@ executables:
     source-dirs: app
     ghc-options: -Wall -O2 -fno-warn-unused-do-bind -threaded -rtsopts -with-rtsopts=-N
     dependencies:
-      - ansi-wl-pprint
-      - optparse-applicative
       - purescript-python
-    when:
-      - condition: flag(release)
-        then:
-          cpp-options: -DRELEASE
-        else:
-          dependencies:
-            - gitrev >=1.2.0 && <1.4
-
-tests:
-  tests:
-    main: Main.hs
-    source-dirs:
-      - tests
-    dependencies:
-      - purescript-python
-      - hspec
-    build-tools:
-      - hspec-discover
 
 default-extensions:
   - ConstraintKinds
@@ -80,13 +63,5 @@ default-extensions:
   - ScopedTypeVariables
   - TupleSections
   - ViewPatterns
-
-flags:
-  release:
-    description: >
-      Mark this build as a release build: prevents inclusion of extra
-      info e.g. commit SHA in --version output)
-    manual: false
-    default: false
 
 stability: experimental
