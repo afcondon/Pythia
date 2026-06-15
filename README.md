@@ -1,10 +1,12 @@
-# purescript-python (purepy)
+# Pythia — purescript-python (`purepy`)
 
-A PureScript backend that compiles to Python. Sibling of
-[Jurist](../purescript-julia/) (PureScript → Julia) in the
-polyglot-PureScript backends family: same architecture, same ADR
-discipline, same differential-conformance method, and (deliberately) the
-same test corpus.
+A PureScript backend that compiles to Python. **Pythia** — the oracle —
+is the Python member of the polyglot-PureScript backends family,
+alongside [Jurist](../purescript-julia/) (PureScript → Julia, *the
+judge*) and [Gnomon](../purescript-go/) (PureScript → Go, *the
+indicator*). The three share the same architecture, the same ADR
+discipline, the same differential-conformance method, and (deliberately)
+the same test corpus.
 
 Rebooted 2026-06-11 on the Jurist skeleton — see
 [`docs/design-decisions/`](docs/design-decisions/) for why and how, and
