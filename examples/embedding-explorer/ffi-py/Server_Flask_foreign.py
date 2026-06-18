@@ -105,7 +105,7 @@ def getRequestJson(req):
 def runImpl(app, port):
     def effect():
         print(f"Starting Flask server on http://localhost:{port}")
-        app.run(port=port, debug=True, use_reloader=False)
+        app.run(host="0.0.0.0", port=port, debug=True, use_reloader=False)
     return effect
 
 # Run with host option

@@ -1,0 +1,4 @@
+# Only the prebuilt output-py + requirements are needed to build the image.
+*
+!output-py
+!requirements.txt
