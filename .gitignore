@@ -35,3 +35,4 @@ spago.lock
 .DS_Store
 Thumbs.db
 test-project/output-py-new/
+.direnv/
