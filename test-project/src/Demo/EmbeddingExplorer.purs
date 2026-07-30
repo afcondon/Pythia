@@ -8,11 +8,19 @@ import Effect.Console (log)
 import Server.Flask (createApp, get, jsonify, run, cors)
 import Data.UMAP (LabeledEmbedding, LabeledPoint, UMAPConfig, projectWithLabels, getDemoEmbeddings)
 
+-- | Raw dimension data for SPLOM visualization
+type SplomPoint =
+  { label :: String
+  , dims :: Array Number
+  , category :: String
+  }
+
 -- | API response types
 type ProjectionResponse =
   { success :: Boolean
   , data ::
       { points :: Array LabeledEmbedding
+      , rawDimensions :: Array SplomPoint  -- First N dims for SPLOM
       , config :: UMAPConfig
       , categories :: Array String
       }
@@ -21,6 +29,9 @@ type ProjectionResponse =
 
 -- | Get unique categories from embeddings
 foreign import getCategories :: Array LabeledPoint -> Array String
+
+-- | Extract first N dimensions for SPLOM visualization
+foreign import getSplomData :: Int -> Array LabeledPoint -> Array SplomPoint
 
 -- | UMAP configuration for word embeddings
 wordEmbeddingConfig :: UMAPConfig
@@ -58,11 +69,13 @@ main = do
     let rawEmbeddings = getDemoEmbeddings
     let projected = projectWithLabels wordEmbeddingConfig rawEmbeddings
     let categories = getCategories rawEmbeddings
+    let splomData = getSplomData 6 rawEmbeddings  -- First 6 dims for SPLOM
     log $ "Projected " <> show (140) <> " words to 2D"  -- 7 categories × 20 words
     pure $ jsonify
       { success: true
       , data:
           { points: projected
+          , rawDimensions: splomData
           , config: wordEmbeddingConfig
           , categories: categories
           }
