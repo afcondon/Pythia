@@ -8,7 +8,7 @@ links) is correct on the MBP **without Docker**, exactly as it is on the mini
 that satisfies its routing contract — fix is topology, not content.
 
 This is the "edge artifact" half of the topology-contract plan; see
-purescript-polyglot/docs/kb/architecture/polyglot-showcase-deploy-status.md
+afc-work/docs/kb/architecture/polyglot-showcase-deploy-status.md
 (§PROPOSAL "the edge is topology, preserve it locally"). Bosun's MBP fixture
 (bosun/fixtures/polyglot-up) launches the backends as internal processes and this
 edge as the front door (boot order: backends -> edge).

@@ -622,7 +622,7 @@ For full uncurrying with cross-module arity tracking, a PureScript rewrite is re
 
 *Added 2026-02-24, based on cross-backend analysis of purerl, purescm/purekt, purepy, and .NET feasibility.*
 
-A detailed study of all PureScript alternative backends surfaced several lessons that apply directly to purepy's roadmap. See the full comparison document at `purescript-polyglot/docs/kb/research/purescript-alternative-backends-comparison.md`.
+A detailed study of all PureScript alternative backends surfaced several lessons that apply directly to purepy's roadmap. See the full comparison document at `afc-work/docs/kb/research/purescript-alternative-backends-comparison.md`.
 
 ### Key Takeaways
 
@@ -694,5 +694,5 @@ The new `bench/cross_backend_bench.py` extends the existing harness to:
 - [Cython](https://cython.org/) - C extensions for Python
 - [Numba](https://numba.pydata.org/) - JIT compiler for numeric Python
 - [PyPy](https://www.pypy.org/) - Fast Python implementation with JIT
-- [Cross-Backend Comparison](../../purescript-polyglot/docs/kb/research/purescript-alternative-backends-comparison.md) - Full backend comparison document
+- [Cross-Backend Comparison](../../afc-work/docs/kb/research/purescript-alternative-backends-comparison.md) - Full backend comparison document
 - [UTF-16 String Audit](UTF16-STRING-AUDIT.md) - String semantics divergence analysis

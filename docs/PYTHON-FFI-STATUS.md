@@ -101,7 +101,7 @@ Known string divergences (non-BMP characters) are documented in `docs/UTF16-STRI
 
 ### Cross-Backend Comparison Document
 
-A comprehensive cross-backend comparison covering purerl, purescm/purekt, purepy, and .NET has been published at `purescript-polyglot/docs/kb/research/purescript-alternative-backends-comparison.md`. This covers architecture, data representation, currying strategies, TCO, FFI patterns, string semantics, and lessons for new backends.
+A comprehensive cross-backend comparison covering purerl, purescm/purekt, purepy, and .NET has been published at `afc-work/docs/kb/research/purescript-alternative-backends-comparison.md`. This covers architecture, data representation, currying strategies, TCO, FFI patterns, string semantics, and lessons for new backends.
 
 ## Current FFI Coverage
 
