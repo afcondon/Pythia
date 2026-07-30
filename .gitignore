@@ -39,3 +39,5 @@ test-project/output-py-new/
 
 # Python virtualenvs for the examples' runtime deps (flask, pandapower, umap)
 .venv/
+
+__pycache__/
