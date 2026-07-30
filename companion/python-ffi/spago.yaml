@@ -1,0 +1,21 @@
+# Pythia's companion library: PureScript modules whose foreigns are supplied by
+# the BACKEND rather than by any one program. The .purs lives here; the Python
+# implementation is in the backend's builtin catalogue
+# (src/Language/PureScript/Python/Foreigns.hs), exactly as the core libraries
+# work — upstream .purs from the registry, foreign from the backend.
+#
+# There is no `backend:` section and no JS foreign, so this package does NOT
+# compile under the stock JavaScript backend. That is the defining property of
+# the tier, and it is why the differential corpus cannot test any of it.
+package:
+  name: purepy-python
+  dependencies:
+    - prelude
+    - maybe
+    - record
+    - unsafe-coerce
+workspace:
+  packageSet:
+    registry: 57.1.0
+  backend:
+    cmd: "true"

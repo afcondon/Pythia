@@ -1,0 +1,23 @@
+# The companion-library law lane.
+#
+# Companion libraries cannot be tested by the differential corpus: its whole
+# method is running the same FFI-free source on two backends and diffing, and
+# these modules have no JS counterpart to diff against. So they get property
+# and round-trip assertions instead, run on Python only.
+package:
+  name: purepy-python-laws
+  dependencies:
+    - prelude
+    - console
+    - effect
+    - maybe
+    - refs
+    - purepy-python
+workspace:
+  packageSet:
+    registry: 57.1.0
+  extraPackages:
+    purepy-python:
+      path: ../python-ffi
+  backend:
+    cmd: "true"

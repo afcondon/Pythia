@@ -334,6 +334,18 @@ builtinForeigns =
       , "        return eff"
       , "    return go"
       ] )
+  , ( "Python_Kwargs_foreign.py", T.unlines
+      [ "# FFI for Python.Kwargs (companion library, not a core PS package)"
+      , "#"
+      , "# Kwargs is a plain dict destined for a ** splat. insertKw COPIES, so"
+      , "# emptyKwargs is never mutated and a Kwargs value can be shared."
+      , "emptyKwargs = {}"
+      , "def insertKw(k): return lambda v: lambda d: {**d, k: v}"
+      , "def unsafeToPy(x): return x"
+      , "def debugKwargs(d):"
+      , "    return \"{\" + \", \".join("
+      , "        k + \"=\" + repr(v) for k, v in sorted(d.items())) + \"}\""
+      ] )
   , ( "Effect_Exception_foreign.py", T.unlines
       [ "# FFI for Effect.Exception"
       , "#"

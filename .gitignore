@@ -41,3 +41,6 @@ test-project/output-py-new/
 .venv/
 
 __pycache__/
+companion/*/output/
+companion/*/output-py/
+companion/*/.spago/
