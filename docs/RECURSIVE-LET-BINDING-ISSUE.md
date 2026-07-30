@@ -44,12 +44,53 @@ value** through a partial application:
 so the name must already be bound. It isn't, and cannot be — this is a knot
 that value-capture cannot tie.
 
+## The exact trigger (narrower than it first looks)
+
+Recursion alone is fine. What matters is **how the self-reference reaches the
+body**, and that depends on whether the body gets lambda-lifted:
+
+| shape | self-reference becomes | result |
+|---|---|---|
+| top-level | a module-global name | fine — late-bound |
+| local, tail-recursive | nothing; TCO rewrites it to a loop | fine |
+| local, non-tail, body inline | a free variable in a closure | fine — late-bound |
+| local, non-tail, **body lifted** | an eager `_mk` argument | **breaks** |
+
+Only the last row fails. Confirmed by
+`test-suite/src/Test/RecursiveBindings.purs`, which holds all four shapes:
+
+```
+                node (reference)   Pythia
+  factLocal     120                120                    inline closure
+  sumTree       6                  UnboundLocalError      lifted body
+  evenOddLocal  true               True                   mutual, inline
+```
+
+A body gets lifted once it is complex enough — an uncurried `mkFn2` lambda
+with a constructor `case` is plenty. That is the ordinary way to write a
+container fold, which is exactly why `Data.Map.Internal.foldrWithIndex` lands
+on it.
+
 ## Why it went unnoticed
 
-No example, test-project or corpus module in this repo had ever imported
-`Data.Map`, `Data.Set` or `ordered-collections` — verified by grep across
-`examples/*/src`, `examples/*/spago.yaml` and `test-project/src`. The bug has
-been latent since the backend was written. It is not a regression.
+Two independent gaps, and the second is the more interesting one.
+
+**No corpus module had ever imported `ordered-collections`** — verified by grep
+across `examples/*/src`, `examples/*/spago.yaml`, `test-project/src` and
+`test-suite/`. `Data.Map` and `Data.Set` were simply never compiled, on any
+backend.
+
+**And `Test.Recursion` passed.** The corpus did have recursion coverage, and it
+was green, because every case in it is either top-level or tail-recursive —
+rows 1 and 2 of the table above. `triangle`'s `where`-bound `go` looks like the
+failing shape and is not: purepy's TCO transform rewrites it to a `_tco_run`
+loop, so `go` never appears on its own right-hand side at all.
+
+That is the lesson worth keeping: the feature was covered, the *codegen path*
+was not. Coverage counted by language concept ("we test recursion") missed a
+variant that compiles completely differently.
+
+The bug has been latent since the backend was written. It is not a regression.
 
 ## The shape of the fix
 
@@ -76,14 +117,19 @@ inferring.
 
 ## Reproduction
 
+The corpus now carries it as a permanent case:
+
 ```bash
-cd examples/<anything>
-# add `ordered-collections` to spago.yaml dependencies, then in any module:
-#   import Data.Map as Map
-#   main = log (show (Map.size (Map.singleton 1 "a")))
-spago build && stack exec --stack-yaml ../../stack.yaml purepy -- output output-py
-python3 output-py     # UnboundLocalError before anything runs
+cd test-suite
+spago build && stack exec --stack-yaml ../stack.yaml purepy -- output output-py
+cd output-py && python3 -c "import sys; sys.path.insert(0,'.'); \
+  import Test_RecursiveBindings as T; print(T.sumTree(T.sample))"
+# UnboundLocalError: cannot access local variable 'go'
+node -e "console.log(require('./output/Test.RecursiveBindings/index.js').sumTree(...))"  # 6
 ```
+
+Or via any real use — adding `ordered-collections` and `import Data.Map as Map`
+to any example kills it at import time, before `main` runs.
 
 ## Workaround in force
 
