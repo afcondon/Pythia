@@ -55,6 +55,46 @@ def getImpl(app, path, handler):
         return None
     return effect
 
+# GET route whose handler sees the request, for query parameters
+def getWithImpl(app, path, handler):
+    endpoint = _make_endpoint('getwith', path)
+    def effect():
+        def get_handler():
+            result = handler(request)()  # Pass request, run Effect
+            if isinstance(result, JsonResponse):
+                return flask_jsonify(_to_json_safe(result.data))
+            return result
+        app.add_url_rule(path, endpoint, get_handler, methods=['GET'])
+        return None
+    return effect
+
+
+# Fn3 Request String Number Number — called saturated, so a plain def.
+def requestNumberImpl(req, key, fallback):
+    raw = req.args.get(key)
+    if raw is None:
+        body = req.get_json(silent=True) or {}
+        raw = body.get(key)
+    if raw is None:
+        return fallback
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return fallback
+
+
+# Fn2 Request String (Array Int)
+def requestArrayIntImpl(req, key):
+    body = req.get_json(silent=True) or {}
+    raw = body.get(key)
+    if raw is None:
+        return []
+    try:
+        return [int(x) for x in raw]
+    except (TypeError, ValueError):
+        return []
+
+
 # POST route with request access
 def postImpl(app, path, handler):
     endpoint = _make_endpoint('post', path)

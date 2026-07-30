@@ -1,0 +1,21 @@
+# The shared core: the whole of the grid analysis.
+#
+# Every module here is FFI-free except Grid.Solver and Server.Flask, which are
+# the seam — a foreign DECLARATION each, with the per-runtime implementation
+# living in the column that provides it.
+#
+# Being FFI-free is not decoration: it is what would let the analysis modules
+# compile under the stock JavaScript backend for a differential parity column,
+# the way stability-atlas runs parity-node against parity-jl.
+package:
+  name: grid-explorer-core
+  dependencies:
+    - arrays
+    - effect
+    - foldable-traversable
+    - integers
+    - maybe
+    - numbers
+    - prelude
+    - strings
+    - tuples

@@ -9,7 +9,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Prebuilt compiled output (self-contained: runtime + FFI shims baked in).
-COPY output-py ./output-py
+# Lives under the Python column since the 2026-07-30 restructure to the
+# polyglot-template layout (core/ + columns/<runtime>/).
+COPY columns/python/output-py ./output-py
 
 # Flask binds 0.0.0.0:8082 (runImpl patched to bind all interfaces so the edge
 # container can reach it; loopback-only would be unreachable across containers).

@@ -1,0 +1,29 @@
+# The Python lowering.
+#
+# `backend: cmd: "true"` is the whole trick for a non-JS column: purs emits
+# CoreFn, the no-op backend skips JavaScript codegen entirely, and purepy runs
+# over output/ afterwards. It is also why no bogus JS companion is needed for
+# the seam's foreign imports.
+#
+# Build, from this directory:
+#   spago build
+#   stack exec --stack-yaml ../../../../stack.yaml purepy -- output output-py
+#   .venv/bin/python output-py
+package:
+  name: grid-explorer-python
+  dependencies:
+    - arrays
+    - console
+    - effect
+    - grid-explorer-core
+    - maybe
+    - prelude
+
+workspace:
+  packageSet:
+    registry: 57.1.0
+  extraPackages:
+    grid-explorer-core:
+      path: ../../core
+  backend:
+    cmd: "true"

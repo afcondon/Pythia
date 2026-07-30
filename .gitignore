@@ -36,3 +36,6 @@ spago.lock
 Thumbs.db
 test-project/output-py-new/
 .direnv/
+
+# Python virtualenvs for the examples' runtime deps (flask, pandapower, umap)
+.venv/
