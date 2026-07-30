@@ -26,7 +26,7 @@ import Effect (Effect)
 import Effect.Console (log)
 
 t :: String -> String -> Effect Unit
-t label value = log (label <> ": " <> value)
+t label value = log ("TEST " <> label <> ": " <> value)
 
 data Tree = Leaf | Node Tree Int Tree
 

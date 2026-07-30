@@ -16,6 +16,7 @@ package:
     - integers
     - maybe
     - numbers
+    - ordered-collections
     - prelude
     - strings
     - tuples

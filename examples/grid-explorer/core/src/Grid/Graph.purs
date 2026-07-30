@@ -5,12 +5,12 @@
 -- | This replaces `_find_islands` (a BFS in `Grid_Cascade_foreign.py`) and the
 -- | networkx calls in `Grid_Metrics_foreign.py`.
 -- |
--- | NOTE: this wants `Data.Map` and `Data.Set` and cannot have them — purepy
--- | miscompiles the recursive local binding in `Data.Map.Internal`, so
--- | importing it kills the program at import time. See
--- | `docs/RECURSIVE-LET-BINDING-ISSUE.md`. Adjacency is therefore an array of
--- | records and membership is a linear scan. On a thirty-bus network that
--- | costs nothing; revert to `Data.Map` once the backend is fixed.
+-- | Adjacency is a `Map Int (Set Int)`, and the searches carry `Set Int` for
+-- | the visited frontier. This module was briefly written against sorted
+-- | arrays and linear scans because purepy miscompiled the recursive local
+-- | binding inside `Data.Map.Internal` and any import of it died before
+-- | `main`; that is fixed (see `docs/RECURSIVE-LET-BINDING-ISSUE.md`) and the
+-- | module now says what it means.
 module Grid.Graph
   ( Adjacency
   , adjacencyFrom
@@ -23,82 +23,80 @@ module Grid.Graph
 
 import Prelude
 
-import Data.Array (concat, elem, filter, find, head, length, nub, snoc, uncons)
-import Data.Foldable (maximum)
+import Data.Array (filter, snoc, uncons)
+import Data.Array as Array
+import Data.Foldable (foldl, maximum)
+import Data.Map (Map)
+import Data.Map as Map
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Set (Set)
+import Data.Set as Set
+import Data.Tuple (Tuple(..))
 
--- | Undirected adjacency: one entry per bus, neighbours de-duplicated.
-type Adjacency = Array { bus :: Int, neighbours :: Array Int }
+-- | Undirected adjacency: every bus present, so an isolated one is its own
+-- | component rather than absent.
+type Adjacency = Map Int (Set Int)
 
 -- | Build adjacency from branch endpoints. Only in-service branches should be
--- | passed in — see `Grid.Types.branchEndpoints`. Every bus gets an entry, so
--- | an isolated one is its own component rather than absent.
+-- | passed in — see `Grid.Types.branchEndpoints`.
 adjacencyFrom :: Array Int -> Array { from :: Int, to :: Int } -> Adjacency
-adjacencyFrom busIds edges = map entry busIds
+adjacencyFrom busIds edges = foldl addEdge empty edges
   where
-  entry b =
-    { bus: b
-    , neighbours: nub (concat (map (touching b) edges))
-    }
-  touching b e
-    | e.from == b = [ e.to ]
-    | e.to == b = [ e.from ]
-    | otherwise = []
+  empty = Map.fromFoldable (map (\b -> Tuple b Set.empty) busIds)
+  addEdge adj e = link e.from e.to (link e.to e.from adj)
+  link a b = Map.alter (Just <<< Set.insert b <<< fromMaybe Set.empty) a
 
-neighboursOf :: Adjacency -> Int -> Array Int
-neighboursOf adj b = case find (\e -> e.bus == b) adj of
-  Just e -> e.neighbours
-  Nothing -> []
+neighboursOf :: Adjacency -> Int -> Set Int
+neighboursOf adj b = fromMaybe Set.empty (Map.lookup b adj)
 
 -- | Breadth-first closure from a set of roots.
-reachableFrom :: Adjacency -> Array Int -> Array Int
-reachableFrom adj roots = go (nub roots) (nub roots)
+reachableFrom :: Adjacency -> Array Int -> Set Int
+reachableFrom adj roots = go (Set.fromFoldable roots) roots
   where
   go seen frontier = case uncons frontier of
     Nothing -> seen
     Just { head: b, tail } ->
       let
-        fresh = filter (\n -> not (elem n seen)) (neighboursOf adj b)
+        fresh = filter (\n -> not (Set.member n seen))
+                       (Set.toUnfoldable (neighboursOf adj b))
       in
-        go (seen <> fresh) (tail <> fresh)
+        go (foldl (flip Set.insert) seen fresh) (tail <> fresh)
 
 -- | Buses with no path to any slack bus. These are what a cascade has cut
 -- | adrift; their load is lost.
 islandedBuses :: Adjacency -> Array Int -> Array Int -> Array Int
 islandedBuses adj slackBuses allBuses =
-  filter (\b -> not (elem b live)) allBuses
+  filter (\b -> not (Set.member b live)) allBuses
   where
   live = reachableFrom adj slackBuses
 
 -- | Connected components, as arrays of bus ids.
 components :: Adjacency -> Array Int -> Array (Array Int)
-components adj allBuses = go allBuses [] []
+components adj allBuses = go allBuses Set.empty []
   where
-  go remaining seen acc =
-    case head (filter (\b -> not (elem b seen)) remaining) of
-      Nothing -> acc
-      Just b ->
-        let
-          comp = reachableFrom adj [ b ]
-        in
-          go remaining (seen <> comp) (snoc acc comp)
+  go remaining seen acc = case Array.head (filter (\b -> not (Set.member b seen)) remaining) of
+    Nothing -> acc
+    Just b ->
+      let
+        comp = reachableFrom adj [ b ]
+      in
+        go remaining (Set.union seen comp) (snoc acc (Set.toUnfoldable comp))
 
 degrees :: Adjacency -> Array Int
-degrees = map (length <<< _.neighbours)
+degrees adj = map Set.size (Array.fromFoldable (Map.values adj))
 
--- | Shortest-path depths from one bus, by breadth-first layering. Association
--- | array rather than a Map, for the reason at the top of the module.
-depthsFrom :: Adjacency -> Int -> Array { bus :: Int, depth :: Int }
-depthsFrom adj root = go [ { bus: root, depth: 0 } ] [ root ]
+-- | Shortest-path depths from one bus, by breadth-first layering.
+depthsFrom :: Adjacency -> Int -> Map Int Int
+depthsFrom adj root = go (Map.singleton root 0) [ root ]
   where
   go depths frontier = case uncons frontier of
     Nothing -> depths
     Just { head: b, tail } ->
       let
-        d = fromMaybe 0 (map _.depth (find (\e -> e.bus == b) depths))
-        known = map _.bus depths
-        fresh = filter (\n -> not (elem n known)) (neighboursOf adj b)
-        depths' = depths <> map (\n -> { bus: n, depth: d + 1 }) fresh
+        d = fromMaybe 0 (Map.lookup b depths)
+        fresh = filter (\n -> not (Map.member n depths))
+                       (Set.toUnfoldable (neighboursOf adj b))
+        depths' = foldl (\m n -> Map.insert n (d + 1) m) depths fresh
       in
         go depths' (tail <> fresh)
 
@@ -110,4 +108,4 @@ diameter adj allBuses =
   where
   componentDiameter comp = fromMaybe 0 (maximum (map eccentricity comp))
   eccentricity root =
-    fromMaybe 0 (maximum (map _.depth (depthsFrom adj root)))
+    fromMaybe 0 (maximum (Array.fromFoldable (Map.values (depthsFrom adj root))))

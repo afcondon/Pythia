@@ -103,25 +103,44 @@ import Language.PureScript.PSString (PSString, decodeString)
 
 import Language.PureScript.Python.CodeGen.Common
 
--- | Code generation state: fresh-name counter and lifted module-level
--- defs awaiting flush (emitted before the top-level binding being
--- compiled).
-type Gen = State (Int, [T.Text])
+-- | Code generation state: fresh-name counter, lifted module-level defs
+-- awaiting flush (emitted before the top-level binding being compiled),
+-- and the current LATE set - names that must not be captured by value
+-- (see 'liftAbs').
+type Gen = State (Int, [T.Text], Set.Set T.Text)
 
 fresh :: Gen T.Text
 fresh = do
-  (i, ds) <- get
-  put (i + 1, ds)
+  (i, ds, lt) <- get
+  put (i + 1, ds, lt)
   pure ("_lam" <> T.pack (show i))
 
 emitDef :: T.Text -> Gen ()
-emitDef d = modify (\(i, ds) -> (i, ds ++ [d]))
+emitDef d = modify (\(i, ds, lt) -> (i, ds ++ [d], lt))
 
 flushDefs :: Gen [T.Text]
 flushDefs = do
-  (i, ds) <- get
-  put (i, [])
+  (i, ds, lt) <- get
+  put (i, [], lt)
   pure ds
+
+-- | Names whose binding is not complete yet, so any reference to them
+-- must resolve at CALL time rather than at closure-creation time.
+getLate :: Gen (Set.Set T.Text)
+getLate = do
+  (_, _, lt) <- get
+  pure lt
+
+-- | Run an action with a given LATE set, restoring the previous one
+-- afterwards. Carried in the state rather than as a parameter so the
+-- dozen mutually-recursive generators keep their signatures.
+withLate :: Set.Set T.Text -> Gen a -> Gen a
+withLate lt act = do
+  old <- getLate
+  modify (\(i, ds, _) -> (i, ds, lt))
+  r <- act
+  modify (\(i, ds, _) -> (i, ds, old))
+  pure r
 
 -- | Locally-bound (function-scope) names currently in scope; used to
 -- compute the free variables a lifted lambda must close over.
@@ -130,7 +149,7 @@ type Env = Set.Set T.Text
 -- | Generate the Python body (declarations only, no module header) for a module
 generateModulePy :: CoreFn.Module CoreFn.Ann -> T.Text
 generateModulePy cfModule =
-  T.unlines $ evalState (concat <$> mapM genTop (CoreFn.moduleDecls cfModule)) (0, [])
+  T.unlines $ evalState (concat <$> mapM genTop (CoreFn.moduleDecls cfModule)) (0, [], Set.empty)
   where
     genTop :: CoreFn.Bind CoreFn.Ann -> Gen [T.Text]
     genTop b = do
@@ -231,6 +250,16 @@ generateModulePy cfModule =
 
       CoreFn.Abs _ arg body -> liftAbs env recNames arg body
 
+      -- Immediately-applied lambda: its body runs NOW, so a LATE name
+      -- inside it is still unbound. Keep the LATE set for the head.
+      CoreFn.App _ (CoreFn.Abs _ hArg hBody) arg -> do
+        late <- getLate
+        f <- if Set.null late
+               then liftAbs env recNames hArg hBody
+               else inlineAbsKeepLate env recNames hArg hBody
+        a <- generateExpr env recNames arg
+        pure ("(" <> f <> ")(" <> a <> ")")
+
       CoreFn.App _ fn arg -> do
         f <- generateExpr env recNames fn
         a <- generateExpr env recNames arg
@@ -261,6 +290,14 @@ generateModulePy cfModule =
 
     -- | Hoist a lambda to a module-level def, closing over its free
     -- local variables explicitly.
+    --
+    -- Lifting captures the environment BY VALUE, at the point the
+    -- closure is built (@_mk(_lamN, free...)@ reads every free name
+    -- eagerly). That is wrong for any name in the LATE set - a local
+    -- binding still being defined, which is not bound yet. Such a lambda
+    -- stays INLINE instead, because Python resolves an enclosing-scope
+    -- name at call time, which is exactly the late binding a recursive
+    -- knot needs.
     liftAbs :: Env -> [T.Text] -> P.Ident -> CoreFn.Expr CoreFn.Ann -> Gen T.Text
     liftAbs env recNames arg body = do
       let param = identName arg
@@ -269,13 +306,39 @@ generateModulePy cfModule =
                      (Set.delete param (collectLocalRefs currentModule body))
                      env)
           env' = Set.fromList (free ++ [param])
-      bodyTxt <- generateExpr env' recNames body
-      name <- fresh
-      emitDef ("def " <> name <> "(" <> T.intercalate ", " (free ++ [param])
-               <> "): return " <> bodyTxt)
-      pure $ if null free
-        then name
-        else "_mk(" <> name <> ", " <> T.intercalate ", " free <> ")"
+      late <- getLate
+      if any (`Set.member` late) free
+        then inlineAbs env recNames arg body
+        else do
+          bodyTxt <- generateExpr env' recNames body
+          name <- fresh
+          emitDef ("def " <> name <> "(" <> T.intercalate ", " (free ++ [param])
+                   <> "): return " <> bodyTxt)
+          pure $ if null free
+            then name
+            else "_mk(" <> name <> ", " <> T.intercalate ", " free <> ")"
+
+    -- | Emit a lambda inline (no lifting). Its body only runs when the
+    -- lambda is CALLED, by which point the binding that put us in LATE
+    -- mode is complete - so lifting is re-enabled inside it, and the
+    -- deep-nesting that lifting exists to avoid is confined to the
+    -- lambda chain itself.
+    inlineAbs :: Env -> [T.Text] -> P.Ident -> CoreFn.Expr CoreFn.Ann -> Gen T.Text
+    inlineAbs env recNames arg body = do
+      let param = identName arg
+      bodyTxt <- withLate Set.empty
+                   (generateExpr (Set.insert param env) recNames body)
+      pure ("(lambda " <> param <> ": " <> bodyTxt <> ")")
+
+    -- | As 'inlineAbs', but KEEPS the LATE set for the body. Used for a
+    -- lambda in application-head position, whose body therefore runs
+    -- immediately - before the binding completes - so nothing inside it
+    -- may capture a LATE name by value either.
+    inlineAbsKeepLate :: Env -> [T.Text] -> P.Ident -> CoreFn.Expr CoreFn.Ann -> Gen T.Text
+    inlineAbsKeepLate env recNames arg body = do
+      let param = identName arg
+      bodyTxt <- generateExpr (Set.insert param env) recNames body
+      pure ("(lambda " <> param <> ": " <> bodyTxt <> ")")
 
     -- | Shared case compilation: dispatch lambda over the (tupled)
     -- scrutinee, alternatives as a ternary chain. Parameterized by the
@@ -333,9 +396,13 @@ generateModulePy cfModule =
 
     -- | Let bindings become walrus statements inside an IIFE; returns
     -- the extended environment for the body. Local (mutual) recursion:
-    -- non-TCO recursive bindings keep their outermost lambda chain
-    -- inline so the recursive name resolves late (call time), by which
-    -- point every member of the group is bound.
+    -- non-TCO recursive bindings are compiled with the group's names in
+    -- the LATE set, so every lambda that closes over one stays inline
+    -- and resolves it at call time, by which point the whole group is
+    -- bound. Applies wherever the lambda sits in the RHS - directly
+    -- (@go = \\x -> ... go ...@) or under a wrapper
+    -- (@go = mkFn2 \\a b -> ... go ...@), which is how a container fold
+    -- is written and was the shape that broke @Data.Map@.
     generateLetBinds :: Env -> [T.Text] -> [CoreFn.Bind CoreFn.Ann] -> Gen (Env, [T.Text])
     generateLetBinds env recNames = go env []
       where
@@ -353,7 +420,8 @@ generateModulePy cfModule =
                               rhs <- generateTcoExpr e' recNames (identName ident) ps body
                               pure ("(" <> identName ident <> " := " <> rhs <> ")")
                             Nothing -> do
-                              rhs <- generateInlineAbs e' recNames expr
+                              rhs <- withLate (Set.fromList names)
+                                       (generateExpr e' recNames expr)
                               pure ("(" <> identName ident <> " := " <> rhs <> ")"))
                         bindings
           go e' (acc ++ stmts) rest
