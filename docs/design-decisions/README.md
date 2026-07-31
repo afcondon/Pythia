@@ -54,6 +54,7 @@ place:
 | - | - | - |
 | 0001 | [Reboot as a Jurist-sibling from-scratch compiler](0001-reboot-as-jurist-sibling.md) | Accepted |
 | 0002 | [Expression emission with module-level lambda lifting](0002-expression-emission-lambda-lifting.md) | Accepted |
+| 0003 | [Two implementations: `purepy` the oracle, `backend-py` the optimizer consumer](0003-two-implementations.md) | Accepted |
 
 ## Scope
 
@@ -69,6 +70,9 @@ The authoritative, up-to-date status lives in the repo
 [`README.md`](../../README.md); these records capture *why* the backend is
 shaped the way it is. The design direction (what the backend is *for*) lives
 in [`../python-shaped-libraries.md`](../python-shaped-libraries.md).
-Frontiers not yet decided (runtime representation, TCO strategy, module
-layout, backend-optimizer integration, Asyncio) will get records as they are
+Since 0003 the repo holds **two** implementations on purpose: `purepy` is the
+correctness oracle, and `backend-py/` (PureScript) consumes
+`purescript-backend-optimizer`'s IR. They share one runtime and one set of
+foreign shims. Frontiers not yet decided (runtime representation, `Int` and
+`String` semantics, module layout, Asyncio) will get records as they are
 settled.

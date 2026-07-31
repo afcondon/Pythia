@@ -36,17 +36,32 @@ thought of. `purescript/purescript`'s `tests/purs/passing` is the suite the
 compiler team wrote to *define the language*:
 
 ```
-339/347 = 97.7%   tests/purs/passing @ v0.15.15   (purs-corpus/run_corpus.py)
+341/347 = 98.3%   tests/purs/passing @ v0.15.15   purepy      (the oracle)
+343/347 = 98.8%   tests/purs/passing @ v0.15.15   backend-py  (ADR-0003)
 ```
 
-Jurist and Gnomon score **exactly the same 339/347**, and 4 of the 6 remaining
-causes are common to more than one backend — the failures are in the shared
-model, not in this lowering. Full analysis:
+Most of the remaining causes are common to more than one backend — the failures
+are in the shared model, not in this lowering. Full analysis:
 `docs/kb/reference/purs-corpus-b4-results.md` in the `docs` repo.
 
 The headline from first contact was **`CODEGEN_ERR` = 0**: across 364 tests
 probing rank-N types, functional dependencies, instance chains, `Coercible`
 and typelevel symbols, nothing made the code generator refuse or crash.
+
+## Two implementations, on purpose
+
+There are **two backends in this repo** — see
+[ADR-0003](docs/design-decisions/0003-two-implementations.md). `purepy`
+(`src/`, Haskell, raw CoreFn) is the correctness **oracle**; `backend-py/`
+(PureScript) consumes `purescript-backend-optimizer`'s IR and gets its TCO,
+inlining and dead-code elimination rather than re-deriving them. Correctness
+claims rest on the oracle, and the method is that both lanes run the same
+corpus against the same JavaScript reference.
+
+They **share one runtime and one set of foreign shims**: `backend-py` emits
+module bodies only, and copies in `purepy`'s `_purepy_runtime.py` and
+`<Module>_foreign.py` unmodified. Gnomon kept two Go runtimes and they silently
+diverged by two symbols; here a fork is structurally unavailable.
 
 ## How it works
 
@@ -101,6 +116,7 @@ per-backend divergence ledgers.
 ## Repository layout
 
 - `src/`, `app/` — the compiler (Haskell; purejl-skeleton architecture)
+- `backend-py/` — the optimizer-consumer lane (PureScript; ADR-0003)
 - `test-suite/` — the differential conformance suite
 - `docs/design-decisions/` — ADRs (family format)
 - `docs/` — design direction + carried-over analyses (UTF-16 audit,
