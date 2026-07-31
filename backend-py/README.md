@@ -69,12 +69,27 @@ one frame, so a closure created inside it would capture the last iteration's
 bindings. This is the same reason `purepy` shaped its own trampoline that way,
 and the same reason purs shapes JS TCO that way.
 
-**Join points are the open frontier.** `TCOMutRec`'s `tco1` defines `g` in a
-`where` inside `f`, so the optimizer marks each a separate self-loop and the
-cross-calls stay stack calls. The optimizer already computes what is needed
-(`TcoRole.joins`); this lane reads only `isLoop`. Consuming `joins` means
-carrying backend-es's `BlockMode` — a TCO scope stack plus a join set — through
-the emitter.
+**Join points too.** A helper written in a `where` *nested* inside a loop member
+— `TCOMutRec`'s `tco1` defines `g` inside `f`, and they tail-call each other —
+is folded into the same dispatch group as another branch, so the cross-calls
+become jumps rather than stack calls. All four of `TCOMutRec`'s positive cases
+run in flat stack; verified byte-identical to the JavaScript reference at depth
+100,000 and still correct at 1,000,000.
+
+The mechanism worth knowing about is the **register file, which is keyed by
+local rather than by position**. Folding a join point in lifts it out of the
+member it was written inside, and it may have captured variables from there
+(`tco4`'s `g y' = f (x + 2) y'` reads `f`'s parameter `x`). A jump leaves the
+frame, so those have to travel too — one slot per distinct local, and `x` gets
+the same slot whether it arrives as `f`'s parameter or as `g`'s capture. The
+register file is bound **once** and reused by every branch: `bindLocal` enforces
+module-wide uniqueness (hazard 1 above), so binding per branch would rename the
+second branch's copy away from the first's.
+
+`TCOMutRec` as a whole still fails, but no longer for a reason in this lane: it
+also asserts that four *non*-TCO-able shapes must overflow, and the optimizer
+inlines two of those helpers away into plain self-loops that complete. See
+[ADR-0003](../docs/design-decisions/0003-two-implementations.md).
 
 ## Usage
 

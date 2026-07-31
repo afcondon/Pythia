@@ -155,7 +155,61 @@ target scope for free.
 
 ### The remaining frontier: join points
 
-`TCOMutRec` still fails, and the reason is precise rather than vague. Its `tco1`
+> **Progress (2026-07-31): implemented, here and on Jurist's `backend-jl`.**
+> The sketch below was right about the shape and incomplete about the cost. A
+> join point does become another member of the dispatch group — but folding it in
+> means *lifting it out of the member it was written inside*, and it may have
+> captured variables from there. `TCOMutRec`'s `tco4` has `g y' = f (x + 2) y'`
+> reading `f`'s parameter `x`; a jump leaves the frame, so `x` has to travel too.
+>
+> The fix is one idea: **make the register file keyed by LOCAL rather than by
+> position** — one slot per distinct local any branch binds, being every member's
+> parameters plus the free variables the join points captured. `x` then gets one
+> slot whether it arrives as `f`'s parameter or as `g`'s capture. Every branch
+> binds every slot on entry, which costs a few dead assignments and buys the
+> invariant the whole thing rests on: at any jump site every slot is in scope, so
+> a captured variable survives an arbitrary chain of jumps.
+>
+> Free variables are filtered by de Bruijn level against the group's own
+> parameters. Anything bound further out is already reachable lexically — the
+> dispatch `def` is emitted *inside* the enclosing scope — and putting it in a
+> register would shadow it. `tco3`'s `g` reads `y0` and `j` from two scopes up and
+> must not.
+>
+> One Python-specific trap: the register file has to be bound **once**, with every
+> branch reusing those names. `bindLocal` enforces module-wide uniqueness (see the
+> four hazards above), so binding per branch would rename the second branch's copy
+> of a slot away from the first's. The Julia lane does not have this problem,
+> because there each `let` is its own scope.
+>
+> Measured on `TCOMutRec`'s four positive cases, byte-identical to the JavaScript
+> reference at depth 100,000, and still correct at 1,000,000 — flat stack, not
+> merely deep:
+>
+> ```
+> tco1 2000000   tco2 2000000   tco3 2499997   tco4 2000000
+> ```
+>
+> `tco3` is the case that makes the design earn its keep: its `g` is *both* a
+> self-loop and a join, so it has to be a branch that can jump to itself and to
+> `f`.
+>
+> **`TCOMutRec` as a whole still fails, and now for a reason that is not ours.**
+> The test also asserts that four *non*-TCO-able shapes MUST overflow
+> (`assertThrows \_ -> ntco2 100000`), and the optimizer inlines `ntco2`'s and
+> `ntco4`'s helper away, turning each into a plain self-tail-loop that completes.
+> Confirmed independently on `backend-jl` — a different lowering over the same
+> optimizer — which also completes `ntco2`, while `purepy` (the oracle, no
+> optimizer) overflows exactly as the test demands. The corpus now reports
+> `Assertion failed: An error should have been thrown` rather than a
+> `RecursionError`, which is the failure saying so itself.
+>
+> That puts `TCOMutRec` where Gnomon's half of it already sits: the
+> `assertThrows` assertions describe a *runtime and optimizer* property rather
+> than PureScript semantics, and belong in the divergence ledger next to `INT64`
+> and `ASTRAL`.
+
+~~`TCOMutRec` still fails, and the reason is precise rather than vague.~~ Its `tco1`
 defines `g` in a `where` *inside* `f`, so the optimizer marks each a separate
 self-loop; the cross-calls between them stay ordinary stack calls, and 100,000
 of those exhaust CPython. The optimizer already computes what is needed —

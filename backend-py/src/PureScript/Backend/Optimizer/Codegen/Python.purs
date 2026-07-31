@@ -68,7 +68,7 @@ import Data.Foldable (foldMap, for_, traverse_)
 import Data.Int (hexadecimal, toStringAs)
 import Data.Map (Map)
 import Data.Map as Map
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Newtype (unwrap)
 import Data.Number as Number
 import Data.Set (Set)
@@ -77,7 +77,7 @@ import Data.String as String
 import Data.String.CodeUnits as SCU
 import Data.Traversable (traverse)
 import Data.Tuple (Tuple(..), snd)
-import PureScript.Backend.Optimizer.Codegen.Tco (TcoAnalysis(..), TcoExpr(..), TcoRef(..), analyze, tcoRoleIsLoop, topLevelTcoEnvGroup, topLevelTcoRefBindings)
+import PureScript.Backend.Optimizer.Codegen.Tco (LocalRef, TcoAnalysis(..), TcoExpr(..), TcoRef(..), analyze, tcoRoleIsLoop, topLevelTcoEnvGroup, topLevelTcoRefBindings)
 import PureScript.Backend.Optimizer.Convert (BackendBindingGroup, BackendModule)
 import PureScript.Backend.Optimizer.CoreFn (Ident(..), Literal(..), ModuleName(..), Prop(..), Qualified(..))
 import PureScript.Backend.Optimizer.Semantics (NeutralExpr)
@@ -273,19 +273,126 @@ type LoopBinding =
   , body :: TcoExpr
   }
 
--- | What counts as a tail call while walking a loop body, and how many arguments
--- | the loop's dispatch tuple carries.
-type LoopMember = { ref :: TcoRef, arity :: Int }
-type LoopCtx = { members :: Array LoopMember, argNames :: Array String, branching :: Boolean }
+-- | One branch of a dispatch group. `wrapper` is `Just` for an ORIGINAL member of
+-- | the recursive group (which is a value the program can reference, so it needs
+-- | a curried wrapper) and `Nothing` for a folded-in JOIN POINT (which is only
+-- | ever jumped to, so it has no value form at all).
+type GroupMember =
+  { ref :: TcoRef
+  , params :: Array LocalRef
+  , body :: TcoExpr
+  , wrapper :: Maybe Ident
+  }
+
+-- | What counts as a tail call while walking a loop body, and how the dispatch
+-- | tuple is laid out.
+-- |
+-- | `layout` is the register file, and it is keyed by LOCAL rather than by
+-- | position: one slot per distinct local bound by any branch. That is what makes
+-- | join points work. A join point captures variables from the member it was
+-- | defined inside (`TCOMutRec`'s `tco4` has `g y' = f (x + 2) y'` reading `f`'s
+-- | parameter `x`), and a jump leaves the frame, so a captured variable has to
+-- | travel in a register. Keying by local means `x` gets ONE slot whether it
+-- | arrives as `f`'s parameter or as `g`'s captured free variable, and every
+-- | branch binds every slot on entry — so at any jump site, every slot is in
+-- | scope and can be passed on.
+type LoopCtx =
+  { members :: Array { ref :: TcoRef, arity :: Int, params :: Array LocalRef }
+  , layout :: Array LocalRef
+  , argNames :: Array String
+  , branching :: Boolean
+  }
 
 loopBindingOf :: Tuple Ident TcoExpr -> Maybe LoopBinding
 loopBindingOf (Tuple ident (TcoExpr _ (Abs params body))) = Just { ident, params, body }
 loopBindingOf _ = Nothing
 
+--------------------------------------------------------------------------------
+-- Join points
+--------------------------------------------------------------------------------
+
+-- | The free local variables of an expression: every `Local` reference not bound
+-- | by an enclosing binder within it.
+-- |
+-- | Needed only for join points. A join point's body is lifted out of the member
+-- | it was written inside and becomes a sibling branch, so anything it captured
+-- | from that member has to be passed explicitly.
+freeLocals :: TcoExpr -> Set LocalRef
+freeLocals (TcoExpr _ syn) = case syn of
+  Local mbId lvl -> Set.singleton (Tuple mbId lvl)
+  Abs params body -> without (NEA.toArray params) (freeLocals body)
+  UncurriedAbs params body -> without params (freeLocals body)
+  UncurriedEffectAbs params body -> without params (freeLocals body)
+  Let mbId lvl val body -> freeLocals val <> without [ Tuple mbId lvl ] (freeLocals body)
+  EffectBind mbId lvl val body -> freeLocals val <> without [ Tuple mbId lvl ] (freeLocals body)
+  LetRec lvl bindings body ->
+    without (map (\(Tuple ident _) -> Tuple (Just ident) lvl) (NEA.toArray bindings))
+      (foldMap (freeLocals <<< snd) (NEA.toArray bindings) <> freeLocals body)
+  _ -> foldMap freeLocals syn
+  where
+  without bs = flip Set.difference (Set.fromFoldable bs)
+
+-- | Does this node's `joins` role name a member of the group being emitted?
+-- |
+-- | The check matters because `joins` is computed against whatever TCO scope was
+-- | in force where the node sits, and loops nest: a `Let` deep inside a nested
+-- | loop can be a join point of the OUTER group, and folding it into the inner
+-- | one would be wrong.
+joinsThisGroup :: Array TcoRef -> TcoAnalysis -> Boolean
+joinsThisGroup groupRefs (TcoAnalysis a) = Array.any (flip Array.elem groupRefs) a.role.joins
+
+-- | Collect the join points reachable in TAIL position from a member's body.
+-- |
+-- | Recurses into a join point's own body, because join points nest: `tco2` has
+-- | `f` tail-call `g`, `g` tail-call `h`, and `h` tail-call `f`.
+-- |
+-- | A nested `LetRec` that is a loop but NOT a join of this group is left alone —
+-- | it owns its own trampoline, and its members are not branches of ours.
+collectJoins :: Array TcoRef -> TcoExpr -> Array GroupMember
+collectJoins groupRefs = go
+  where
+  go (TcoExpr ann syn) = case syn of
+    Let mbId lvl val rest
+      | joinsThisGroup groupRefs ann
+      , TcoExpr _ (Abs params body) <- val ->
+          [ { ref: TcoLocal mbId lvl
+            , params: NEA.toArray params
+            , body
+            , wrapper: Nothing
+            }
+          ] <> go body <> go rest
+      | otherwise -> go rest
+
+    LetRec lvl bindings rest
+      | joinsThisGroup groupRefs ann
+      , Just ms <- traverse loopBindingOf bindings ->
+          Array.concatMap
+            ( \m ->
+                [ { ref: TcoLocal (Just m.ident) lvl
+                  , params: NEA.toArray m.params
+                  , body: m.body
+                  , wrapper: Nothing
+                  }
+                ] <> go m.body
+            )
+            (NEA.toArray ms)
+            <> go rest
+      | isLoopAnalysis ann -> []
+      | otherwise -> go rest
+
+    Branch pairs def -> foldMap (\(Pair _ body) -> go body) (NEA.toArray pairs) <> go def
+
+    _ -> []
+
 -- | Emit a loop group as statements: one `_loop_*` dispatch function plus one
--- | curried wrapper per member. Used for both top-level groups (`nameOf` =
--- | module-level name, `refOf` = `TcoTopLevel`) and local `LetRec` groups
+-- | curried wrapper per ORIGINAL member. Used for both top-level groups (`nameOf`
+-- | = module-level name, `refOf` = `TcoTopLevel`) and local `LetRec` groups
 -- | (`nameOf` = the local name, `refOf` = `TcoLocal`).
+-- |
+-- | Generalised twice over the plain self-recursive case: a leading branch
+-- | register lets several members share one loop (MUTUAL tail recursion), and
+-- | join points are folded in as further branches, so a helper written in a
+-- | `where` NESTED inside a loop member becomes a jump rather than a call.
 genLoopGroup
   :: Env
   -> (Ident -> String)
@@ -293,71 +400,151 @@ genLoopGroup
   -> NonEmptyArray LoopBinding
   -> Gen Unit
 genLoopGroup env nameOf refOf members = do
-  let ms = NEA.toArray members
-  let branching = Array.length ms > 1
-  let arities = map (NEA.length <<< _.params) ms
-  let maxArity = fromMaybe 1 (Array.last (Array.sort arities))
+  let
+    origs = map
+      ( \m ->
+          { ref: refOf m.ident
+          , params: NEA.toArray m.params
+          , body: m.body
+          , wrapper: Just m.ident
+          }
+      )
+      (NEA.toArray members)
+  let groupRefs = map _.ref origs
+  let joins = Array.concatMap (collectJoins groupRefs <<< _.body) origs
+  let allMembers = origs <> joins
+  let branching = Array.length allMembers > 1
+
+  -- One slot per distinct local any branch binds: every member's parameters,
+  -- plus the free variables the join points captured from the member bodies they
+  -- were lifted out of.
+  --
+  -- The level filter keeps the register file small and, more importantly,
+  -- correct. The dispatch `def` is emitted lexically INSIDE the scope that
+  -- encloses the group, so anything bound further out is already reachable and
+  -- must NOT be shadowed by a register (`tco3`'s `g` reads `y0` and `j` from two
+  -- scopes up). Only locals bound at or inside the member bodies have to travel.
+  let memberParams = Array.concatMap _.params allMembers
+  let threshold = Array.foldl (\acc (Tuple _ (Level n)) -> min acc n) top memberParams
+  let joinRefs = map _.ref joins
+  let
+    captured = Array.filter
+      ( \r@(Tuple mbId (Level n)) ->
+          n >= threshold
+            && not (Array.elem r memberParams)
+            && not (Array.elem (TcoLocal mbId (Level n)) groupRefs)
+            && not (Array.elem (TcoLocal mbId (Level n)) joinRefs)
+      )
+      (Set.toUnfoldable (foldMap (freeLocals <<< _.body) joins))
+  let layout = Array.nub (memberParams <> captured)
+
   -- The tag must be unique across the whole MODULE, not merely within a scope:
   -- the dispatch function is a named `def`, and two loop groups whose first
   -- parameter shares a de Bruijn level would otherwise both be `_loop0` and the
   -- second would redefine the first. The fresh counter is module-wide.
   tag <- freshName ""
   let loopName = genPrefix <> "loop" <> tag
-  let argNames = map (\i -> genPrefix <> "a" <> tag <> "_" <> show i) (Array.range 0 (maxArity - 1))
+  let
+    argNames = map (\i -> genPrefix <> "a" <> tag <> "_" <> show i)
+      (Array.range 0 (max 1 (Array.length layout) - 1))
   let
     ctx =
-      { members: map (\m -> { ref: refOf m.ident, arity: NEA.length m.params }) ms
+      { members: map (\m -> { ref: m.ref, arity: Array.length m.params, params: m.params }) allMembers
+      , layout
       , argNames
       , branching
       }
   let branchName = genPrefix <> "br" <> tag
 
-  -- def _loopN(_br, _a0, _a1): ...
-  bodies <- traverse (memberBlock env ctx branchName branching) (Array.mapWithIndex Tuple ms)
+  -- The register file is bound ONCE, and every branch and every wrapper reuses
+  -- those names. Binding per branch would be wrong here in a way it is not in the
+  -- Julia lane: `bindLocal` enforces module-wide uniqueness, so the second branch
+  -- to bind a given slot would be renamed away from the first.
+  Tuple envL slotNames <- bindLocals env layout
+
+  bodies <- traverse (memberBlock envL ctx slotNames branchName branching) (Array.mapWithIndex Tuple allMembers)
   emit ("def " <> loopName <> "(" <> commaSep ((if branching then [ branchName ] else []) <> argNames) <> "):")
   emitAll (indent (Array.concat bodies))
 
-  -- one curried wrapper per member, entering the loop with its branch index
-  for_ (Array.mapWithIndex Tuple ms) \(Tuple idx m) -> do
-    Tuple _ ps <- bindLocals env (NEA.toArray m.params)
-    let padding = Array.replicate (maxArity - Array.length ps) "None"
-    let entry = (if branching then [ show idx ] else []) <> ps <> padding
-    let call = "_tco_run(" <> loopName <> ", (" <> commaSep entry <> ",))"
-    emitAll (nestedDef (nameOf m.ident) ps [] call)
+  -- One curried wrapper per ORIGINAL member, entering the loop with its branch
+  -- index. Join points get none: they are not values, only jump targets.
+  for_ (Array.mapWithIndex Tuple allMembers) \(Tuple idx m) -> case m.wrapper of
+    Nothing -> pure unit
+    Just ident -> do
+      let ps = map (\(Tuple mbId lvl) -> localRef envL mbId lvl) m.params
+      -- At the wrapper only this member's own parameters are in scope; every
+      -- other slot starts empty. Safe because a slot no branch has written is a
+      -- join point's captured variable, and no join point has run yet.
+      let entry = (if branching then [ show idx ] else []) <> slotArgs envL ctx idx ps m.params
+      let call = "_tco_run(" <> loopName <> ", (" <> commaSep entry <> ",))"
+      emitAll (nestedDef (nameOf ident) ps [] call)
 
--- | One member's block inside the dispatch function: bind its parameters from
--- | the positional argument registers, then walk its body in tail-aware
--- | statement mode. With a branch register the blocks are guarded; without one
--- | (a single self-recursive function) the body is emitted bare.
-memberBlock :: Env -> LoopCtx -> String -> Boolean -> Tuple Int LoopBinding -> Gen (Array String)
-memberBlock env ctx branchName branching (Tuple idx m) = do
+-- | The full register tuple for a jump to member `idx`: that member's parameters
+-- | take their argument expressions, and every other slot carries its local
+-- | through unchanged.
+-- |
+-- | `inScope` names the locals the jump site can actually read. Inside a branch
+-- | that is every slot (each branch binds the whole layout on entry), so nothing
+-- | is lost; at a wrapper it is only that member's parameters, and the rest start
+-- | as `None`.
+slotArgs :: Env -> LoopCtx -> Int -> Array String -> Array LocalRef -> Array String
+slotArgs env ctx idx args inScope = map slotFor ctx.layout
+  where
+  targetParams = maybe [] _.params (Array.index ctx.members idx)
+  slotFor loc@(Tuple mbId lvl) = case Array.elemIndex loc targetParams of
+    Just i -> fromMaybe "None" (Array.index args i)
+    Nothing
+      | Array.elem loc inScope -> localRef env mbId lvl
+      | otherwise -> "None"
+
+-- | One branch inside the dispatch function: bind the WHOLE register file, then
+-- | walk the body in tail-aware statement mode.
+-- |
+-- | Binding every slot rather than only this branch's parameters is deliberate.
+-- | It costs a few dead assignments and buys the invariant the join machinery
+-- | rests on: every slot is in scope in every branch, so any jump can pass every
+-- | slot on, and a captured variable survives an arbitrary chain of jumps.
+memberBlock :: Env -> LoopCtx -> Array String -> String -> Boolean -> Tuple Int GroupMember -> Gen (Array String)
+memberBlock env ctx slotNames branchName branching (Tuple idx m) = do
   Tuple stmts _ <- capture do
-    Tuple env' names <- bindLocals env (NEA.toArray m.params)
-    for_ (Array.mapWithIndex Tuple names) \(Tuple i name) ->
+    for_ (Array.mapWithIndex Tuple slotNames) \(Tuple i name) ->
       emit (name <> " = " <> fromMaybe "None" (Array.index ctx.argNames i))
-    genLoopStmts env' ctx m.body
+    genLoopStmts env ctx ctx.layout m.body
   pure
     if branching then [ "if " <> branchName <> " == " <> show idx <> ":" ] <> indent stmts
     else stmts
 
--- | Tail-aware statement walk of a loop body. A tail call to a group member
--- | becomes `return (1, (args...))` -- the continue signal `_tco_run` reads --
--- | and every other tail position becomes `return (0, value)`.
-genLoopStmts :: Env -> LoopCtx -> TcoExpr -> Gen Unit
-genLoopStmts env ctx te@(TcoExpr _ syn) = case syn of
-  Branch pairs def -> genLoopBranch env ctx (NEA.toArray pairs) def
+-- | Tail-aware statement walk of a loop body. A tail call to a branch of this
+-- | group becomes `return (1, (registers...))` -- the continue signal `_tco_run`
+-- | reads -- and every other tail position becomes `return (0, value)`.
+-- |
+-- | `inScope` grows as the walk passes binders, and is what a jump reads to fill
+-- | the slots it is not supplying arguments for.
+genLoopStmts :: Env -> LoopCtx -> Array LocalRef -> TcoExpr -> Gen Unit
+genLoopStmts env ctx inScope te@(TcoExpr _ syn) = case syn of
+  Branch pairs def -> genLoopBranch env ctx inScope (NEA.toArray pairs) def
 
-  Let mbId lvl val rest -> do
-    v <- genExpr env val
-    Tuple env' name <- bindLocal env mbId lvl
-    emit (name <> " = " <> v)
-    genLoopStmts env' ctx rest
+  -- A join point's binding is NOT emitted: it has become a branch of this
+  -- dispatch group, and every reference to it is a jump. The analysis guarantees
+  -- there is no other kind of reference -- `joins` requires every use to be a
+  -- saturated tail call.
+  Let mbId lvl val rest
+    | Array.elem (TcoLocal mbId lvl) (map _.ref ctx.members)
+    , TcoExpr _ (Abs _ _) <- val -> genLoopStmts env ctx inScope rest
+    | otherwise -> do
+        v <- genExpr env val
+        Tuple env' name <- bindLocal env mbId lvl
+        emit (name <> " = " <> v)
+        genLoopStmts env' ctx (Array.snoc inScope (Tuple mbId lvl)) rest
+
+  LetRec lvl bindings rest
+    | Array.all (\(Tuple ident _) -> Array.elem (TcoLocal (Just ident) lvl) (map _.ref ctx.members))
+        (NEA.toArray bindings) -> genLoopStmts env ctx inScope rest
 
   App (TcoExpr _ hsyn) args
     | Just idx <- findMember ctx hsyn (NEA.length args) -> do
         as <- traverse (genExpr env) (NEA.toArray args)
-        let padding = Array.replicate (Array.length ctx.argNames - Array.length as) "None"
-        let entry = (if ctx.branching then [ show idx ] else []) <> as <> padding
+        let entry = (if ctx.branching then [ show idx ] else []) <> slotArgs env ctx idx as inScope
         emit ("return (1, (" <> commaSep entry <> ",))")
 
   _ -> do
@@ -367,15 +554,15 @@ genLoopStmts env ctx te@(TcoExpr _ syn) = case syn of
 -- | Every arm of a loop branch ends in a `return`, so the arms can be emitted as
 -- | a flat run of `if` statements with the default falling through -- no `else`
 -- | nesting, and so no indentation growth with the number of alternatives.
-genLoopBranch :: Env -> LoopCtx -> Array (Pair TcoExpr) -> TcoExpr -> Gen Unit
-genLoopBranch env ctx pairs def = case Array.uncons pairs of
-  Nothing -> genLoopStmts env ctx def
+genLoopBranch :: Env -> LoopCtx -> Array LocalRef -> Array (Pair TcoExpr) -> TcoExpr -> Gen Unit
+genLoopBranch env ctx inScope pairs def = case Array.uncons pairs of
+  Nothing -> genLoopStmts env ctx inScope def
   Just { head: Pair cond body, tail } -> do
     c <- genExpr env cond
-    Tuple stmts _ <- capture (genLoopStmts env ctx body)
+    Tuple stmts _ <- capture (genLoopStmts env ctx inScope body)
     emit ("if " <> c <> ":")
     emitAll (indent stmts)
-    genLoopBranch env ctx tail def
+    genLoopBranch env ctx inScope tail def
 
 findMember :: LoopCtx -> BackendSyntax TcoExpr -> Int -> Maybe Int
 findMember ctx hsyn nargs =
