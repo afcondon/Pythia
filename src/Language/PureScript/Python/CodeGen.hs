@@ -708,7 +708,7 @@ generateModulePy cfModule =
       in case qb of
         P.ByModuleName mn
           | mn == currentModule -> maybeCallLazyThunk name
-          | otherwise -> pyModuleName mn <> "." <> name
+          | otherwise -> pyModuleAlias mn <> "." <> name
         P.BySourcePos _ -> maybeCallLazyThunk name
 
 -- | Collect all references to local (same-module or source-pos-qualified)

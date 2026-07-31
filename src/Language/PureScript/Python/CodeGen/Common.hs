@@ -12,6 +12,8 @@
 --
 module Language.PureScript.Python.CodeGen.Common
   ( pyModuleName
+  , pyModuleAlias
+  , moduleAliasPrefix
   , pyFileName
   , pyForeignModuleName
   , pyForeignFileName
@@ -40,6 +42,34 @@ import Numeric (showHex)
 -- runtime module or with lowercase stdlib modules.
 pyModuleName :: ModuleName -> Text
 pyModuleName (ModuleName name) = T.intercalate "_" (T.splitOn "." name)
+
+-- | The reserved prefix that separates the MODULE namespace from the
+-- user-value namespace. See 'pyModuleAlias'.
+moduleAliasPrefix :: Text
+moduleAliasPrefix = "_psmod_"
+
+-- | The local alias a module is imported under: @import Effect_Console as
+-- _psmod_Effect_Console@.
+--
+-- Without this, both namespaces are flat and a user identifier can rebind an
+-- imported module outright. `tests/purs/passing/4174` does it deliberately:
+--
+-- >  import Effect.Console (log)
+-- >  data Effect_Console = Effect_Console
+--
+-- which used to emit
+--
+-- >  import Effect_Console
+-- >  Effect_Console = ("Effect_Console",)     -- module reference destroyed
+-- >  main = (Effect_Console.log)("Done")      -- 'tuple' has no attribute 'log'
+--
+-- 'identToPyName' escapes any user identifier that would land in this
+-- namespace, so the two are provably disjoint rather than merely unlikely to
+-- collide. (purerl gets the same guarantee for free: its module references are
+-- atoms and its locals are variables — two syntactic categories that cannot
+-- meet. Python has only one namespace, so the separation must be built.)
+pyModuleAlias :: ModuleName -> Text
+pyModuleAlias mn = moduleAliasPrefix <> pyModuleName mn
 
 -- | Output filename for a PureScript module
 pyFileName :: ModuleName -> FilePath
@@ -116,6 +146,13 @@ identToPyName ident =
   let name = toPythonIdent (runIdent' ident)
   in if nameIsPythonReserved name
      then name <> "_"
+     -- Keep the module-alias namespace disjoint from the user namespace: a
+     -- user identifier that would otherwise land in it is pushed out by an
+     -- extra underscore. `_psmod_x` becomes `_psmod__x`, which no
+     -- 'pyModuleAlias' can produce (a mangled module name never begins with
+     -- an underscore, since PureScript module components are capitalised).
+     else if moduleAliasPrefix `T.isPrefixOf` name
+     then moduleAliasPrefix <> "_" <> T.drop (T.length moduleAliasPrefix) name
      else name
 
 -- | Get the raw text from an Ident, handling internal identifiers
