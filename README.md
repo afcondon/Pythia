@@ -17,16 +17,36 @@ the family's verb matrix).
 
 ## Status
 
-**Conformant on the shared corpus**: 422/426 tests byte-identical with
-the reference JS backend, 4 documented divergences, 0 failures
-(`test-suite/run_tests.py`, corpus shared with Jurist). The divergence
-ledger:
+**Conformant on the shared corpus**: 556/561 tests byte-identical with
+the reference JS backend, 5 documented divergences, 0 failures
+(`test-suite/run_tests.py`, corpus shared with Jurist and Gnomon — all
+three report the identical figure, which is the method working). The
+divergence ledger:
 
 - `INT64-*` — JS wraps every Int operation to int32 (`|0`); Python ints
   are arbitrary precision. The JS values are the overflowed ones.
 - `ASTRAL-*` — JS counts UTF-16 code units; Python strings are
   codepoint sequences. Identical for BMP text. (Full background:
   `docs/UTF16-STRING-AUDIT.md`.)
+
+### And against the compiler's own test suite
+
+That corpus is one **we wrote**, so it can only prove parity on cases someone
+thought of. `purescript/purescript`'s `tests/purs/passing` is the suite the
+compiler team wrote to *define the language*:
+
+```
+339/347 = 97.7%   tests/purs/passing @ v0.15.15   (purs-corpus/run_corpus.py)
+```
+
+Jurist and Gnomon score **exactly the same 339/347**, and 4 of the 6 remaining
+causes are common to more than one backend — the failures are in the shared
+model, not in this lowering. Full analysis:
+`docs/kb/reference/purs-corpus-b4-results.md` in the `docs` repo.
+
+The headline from first contact was **`CODEGEN_ERR` = 0**: across 364 tests
+probing rank-N types, functional dependencies, instance chains, `Coercible`
+and typelevel symbols, nothing made the code generator refuse or crash.
 
 ## How it works
 
