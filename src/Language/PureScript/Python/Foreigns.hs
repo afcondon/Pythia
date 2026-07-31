@@ -919,8 +919,13 @@ builtinForeigns =
       , "    m = _math.trunc(x) % 4294967296"
       , "    return m - 4294967296 if m >= 2147483648 else m"
       , "def fromNumberImpl(just):"
+      , "    # `_math.trunc` RAISES on NaN and Infinity where JS's `% 1 === 0`"
+      , "    # is simply false, so the finiteness guard has to come first --"
+      , "    # `Int.fromNumber (0.0/0.0)` crashed here before Test.Boundaries"
+      , "    # asked. Order matters, not just the predicate."
       , "    return lambda nothing_: lambda n: ("
-      , "        just(int(n)) if (n == _math.trunc(n) and -2147483648.0 <= n <= 2147483647.0) else nothing_)"
+      , "        just(int(n)) if (_math.isfinite(n) and n == _math.trunc(n)"
+      , "                         and -2147483648.0 <= n <= 2147483647.0) else nothing_)"
       , "def toNumber(n): return float(n)"
       , "def fromStringAsImpl(just):"
       , "    def go1(nothing_):"
@@ -982,20 +987,34 @@ builtinForeigns =
       , "def isNaN(n): return _math.isnan(n)"
       , "infinity = _math.inf"
       , "def isFinite(n): return _math.isfinite(n)"
+      -- `Data.Number.fromString` is `parseFloat` behind an isFinite guard,
+      -- and parseFloat is a PREFIX parser, not a whole-string one: it skips
+      -- leading whitespace, takes the longest numeric prefix and ignores the
+      -- rest. So "1.5x" is 1.5, "0x10" is 0 (it stops at the `x`), " 1.5 "
+      -- is 1.5 and "1_000" is 1. Rejecting anything that is not the whole
+      -- string got all four wrong. Found by Test.Boundaries.
+      , "import re as _re"
+      , "_FLOAT_PREFIX = _re.compile(r\"\\A\\s*[+-]?(?:Infinity|(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\")"
+      , "def _parse_float(s):"
+      , "    m = _FLOAT_PREFIX.match(s)"
+      , "    return _math.nan if m is None else float(m.group(0).strip())"
       , "def fromStringImpl(s, isFinite_, just, nothing_):"
-      , "    if s != s.strip() or \"_\" in s:"
-      , "        return nothing_"
-      , "    try:"
-      , "        num = float(s)"
-      , "    except ValueError:"
-      , "        return nothing_"
+      , "    num = _parse_float(s)"
       , "    return just(num) if isFinite_(num) else nothing_"
       , "def abs(n): return _math.fabs(n)"
       , "def acos(n): return _math.acos(n) if -1.0 <= n <= 1.0 else _math.nan"
       , "def asin(n): return _math.asin(n) if -1.0 <= n <= 1.0 else _math.nan"
       , "def atan(n): return _math.atan(n)"
       , "def atan2(y): return lambda x: _math.atan2(y, x)"
-      , "def ceil(n): return n if not _math.isfinite(n) else float(_math.ceil(n))"
+      -- `math.ceil`/`math.trunc` return a Python int, and int has no signed
+      -- zero, so `ceil(-0.5)` came back as +0.0 where JS gives -0. The sign
+      -- of a zero is invisible to `show` and to `==` but not to `1/x`, which
+      -- is how Test.Boundaries caught it. `floor` needs no such guard: it
+      -- never returns zero from a negative argument.
+      , "def ceil(n):"
+      , "    if not _math.isfinite(n): return n"
+      , "    r = float(_math.ceil(n))"
+      , "    return _math.copysign(r, n) if r == 0.0 else r"
       , "def cos(n): return _math.nan if _math.isinf(n) else _math.cos(n)"
       , "def exp(n):"
       , "    try:"
@@ -1014,8 +1033,14 @@ builtinForeigns =
       , "_min = min"
       , "def max(n1): return lambda n2: _max(n1, n2)"
       , "def min(n1): return lambda n2: _min(n1, n2)"
+      -- ECMAScript Math.pow is NOT IEEE pow, and the ORDER of its rules is
+      -- the whole of the difference: a zero exponent wins even over a NaN
+      -- base, so `Math.pow(NaN, 0)` is 1 and not NaN. Testing NaN first got
+      -- that backwards. Found by Test.Boundaries.
       , "def pow(n):"
       , "    def go(p):"
+      , "        if p == 0.0:"
+      , "            return 1.0"
       , "        if _math.isnan(n) or _math.isnan(p):"
       , "            return _math.nan"
       , "        if _math.fabs(n) == 1.0 and _math.isinf(p):"
@@ -1061,7 +1086,10 @@ builtinForeigns =
       , "def sin(n): return _math.nan if _math.isinf(n) else _math.sin(n)"
       , "def sqrt(n): return _math.sqrt(n) if n >= 0.0 else _math.nan"
       , "def tan(n): return _math.nan if _math.isinf(n) else _math.tan(n)"
-      , "def trunc(n): return n if not _math.isfinite(n) else float(_math.trunc(n))"
+      , "def trunc(n):"
+      , "    if not _math.isfinite(n): return n"
+      , "    r = float(_math.trunc(n))"
+      , "    return _math.copysign(r, n) if r == 0.0 else r"
       ] )
   , ( "Data_Unfoldable_foreign.py", T.unlines
       [ "# FFI for Data.Unfoldable"
