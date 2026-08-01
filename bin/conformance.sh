@@ -66,4 +66,16 @@ if [[ -n "$strays" ]]; then
 fi
 echo "    none, as required"
 
+echo "==> performance canary (perf)"
+# Gates on CHECKSUMS — the shapes must compute the same answers on both
+# backends, and a benchmark that is quietly wrong is how a perf suite stays
+# green while what it measures rots. Timing drift is REPORTED, not gated:
+# this lane has no variance history yet and a canary that cries wolf on a
+# busy CI runner gets muted, which is worse than one that is slightly deaf.
+# Add --gate-drift once the tolerance is tightened against observed noise.
+(
+  cd perf
+  python3 run_perf.py
+)
+
 echo "==> conformance lane GREEN"
