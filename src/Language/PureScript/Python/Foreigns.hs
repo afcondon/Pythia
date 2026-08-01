@@ -1207,6 +1207,41 @@ builtinForeigns =
       , "def _search(just): return lambda nothing_: lambda r: lambda s: _regex_unimplemented()"
       , "def split(r): return lambda s: _regex_unimplemented()"
       ] )
+  , ( "Effect_Random_foreign.py", T.unlines
+      [ "# FFI for Effect.Random"
+      , "import random as _random"
+      , "# `random :: Effect Number` is a VALUE of effect type, so it is a"
+      , "# zero-argument closure, not a function of one argument."
+      , "random = lambda: _random.random()"
+      ] )
+  , ( "Data_Nullable_foreign.py", T.unlines
+      [ "# FFI for Data.Nullable"
+      , "# JS null maps to None. Unit is also None, which is harmless: the two"
+      , "# never meet in a well-typed program, and the JS backend has exactly"
+      , "# the same overlap between null and undefined-as-unit."
+      , "null = None"
+      , "# `nullable` is Fn3, so a genuine three-argument function."
+      , "def nullable(a, r, f): return r if a is None else f(a)"
+      , "def notNull(x): return x"
+      ] )
+  , ( "Test_QuickCheck_Gen_foreign.py", T.unlines
+      [ "# FFI for Test.QuickCheck.Gen"
+      , "import math as _math"
+      , "import struct as _struct"
+      , "# Reinterpret the low 32 bits of a float32 as a signed int32 -- the JS"
+      , "# original round-trips through an ArrayBuffer to do exactly this. It is"
+      , "# a bit pattern, not a numeric conversion: the value is meaningless and"
+      , "# the BITS are the point, because QuickCheck uses it to derive a seed."
+      , "def float32ToInt32(n):"
+      , "    # Assigning an out-of-range double to a Float32Array SATURATES to"
+      , "    # +/-Infinity in JS; struct.pack RAISES. Everything above 3.4e38"
+      , "    # has to become an infinity, not an exception."
+      , "    try:"
+      , "        b = _struct.pack(\"<f\", n)"
+      , "    except OverflowError:"
+      , "        b = _struct.pack(\"<f\", _math.copysign(_math.inf, n))"
+      , "    return _struct.unpack(\"<i\", b)[0]"
+      ] )
   ]
   where
     arg :: Int -> Text
