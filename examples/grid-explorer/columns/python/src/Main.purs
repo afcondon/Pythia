@@ -64,6 +64,6 @@ main = do
     report <- simulate defaultConfig demoCase (lf req) (requestArrayInt req "initialFailures")
     pure $ jsonify { success: true, data: report, error: "" }
 
-  run app 8082
+  run app 3033
   where
   lf req = requestNumber req "loadFactor" demoLoadFactor

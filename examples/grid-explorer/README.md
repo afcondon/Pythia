@@ -41,20 +41,20 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cd columns/python
 spago build
 stack exec --stack-yaml ../../../../stack.yaml purepy -- output output-py
-../../.venv/bin/python output-py          # Flask on http://localhost:8082
+../../.venv/bin/python output-py          # Flask on http://localhost:3033
 ```
 
-Port 8082 matches hypo-punter's docker-compose table, so the `ge-website`
+Port 3033 matches hypo-punter's docker-compose table, so the `ge-website`
 frontend works against this server unchanged. The frontend lives there, not
 here — this example is the API server only.
 
 ## Endpoints
 
 ```bash
-curl -s 'localhost:8082/api/network?loadFactor=0.7'      # solved state
-curl -s 'localhost:8082/api/contingency?loadFactor=0.7'  # N-1 over every branch
-curl -s 'localhost:8082/api/metrics?loadFactor=0.7'      # topology + loading
-curl -s -X POST localhost:8082/api/simulate \
+curl -s 'localhost:3033/api/network?loadFactor=0.7'      # solved state
+curl -s 'localhost:3033/api/contingency?loadFactor=0.7'  # N-1 over every branch
+curl -s 'localhost:3033/api/metrics?loadFactor=0.7'      # topology + loading
+curl -s -X POST localhost:3033/api/simulate \
   -H 'Content-Type: application/json' \
   -d '{"initialFailures": [35], "loadFactor": 0.7}'      # cascade
 ```
