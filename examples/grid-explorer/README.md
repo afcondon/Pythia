@@ -115,11 +115,14 @@ Median of three runs, M4 MBP, case30 at load factor 0.7:
 
 | scenario | architecture tax | structural distortion | displaced compute | seam cost |
 |---|---:|---:|---:|---:|
-| contingency (42 solves) | 1.85× | **1.02×** | 1.3 % | 44.7 % |
-| metrics (1 solve) | 4.80× | **1.00×** | 73.0 % | 12.0 % |
-| cascade (2 solves) | 1.80× | **0.97×** | 21.9 % | 34.0 % |
+| contingency (42 solves) | 1.22x | **1.03x** | 0.7 % | 8.1 % |
+| metrics (1 solve) | 4.45x | **0.98x** | 81.9 % | 1.4 % |
+| cascade (2 solves) | 1.37x | **1.07x** | 30.8 % | 6.9 % |
 
-**Structural distortion is the number that matters and it is ~1.00 across the
+Run `native/compare.py` to regenerate this table; the numbers move a few
+percent between runs, so read the shape rather than the third digit.
+
+**Structural distortion is the number that matters and it is ~1.0 across the
 board.** It is `poly_foreign / native_foreign`: time inside pandapower here
 against time inside pandapower there, for the same answer. At 1.0 the seam did
 not deform the computation — we call the library exactly as well as the
@@ -127,21 +130,60 @@ single-language version does. That is the failure mode no in-process profiler
 can see, because a deformed computation makes foreign *share* rise and so reads
 as "clean architecture, the library dominates".
 
-The tax is real and it is elsewhere, and the split says exactly where:
+#### Most of the tax was authoring quality, not architecture
 
-- **Contingency, 1.85×.** PureScript is 1.3 % of the wall clock. The cost is
-  the seam: per solve, 368 ms of `deepcopy` and 348 ms of marshalling across
-  42 solves, against 744 ms of actual power flow. The deepcopy is the price of
-  the independence guarantee `Grid.Solver` documents — no mutable handle
-  crosses the boundary, so calls cannot depend on their order. The marshalling
-  is a fat contract: the seam hands back the entire network, layout
-  coordinates included, when the N-1 verdict reads four scalars from it.
-  Both are **choices with known prices**, which is the point of measuring.
-- **Metrics, 4.80×.** 73 % displaced compute — PureScript walking a 30-node
-  graph where the reference calls networkx. That is not an accident either: the
-  exhibit's claim is that degree and diameter arithmetic is *our* analysis, not
-  domain expertise to be borrowed. 4.8× of 25 ms is what that position costs.
-- **Cascade, 1.80×.** Same seam story, two solves instead of 42.
+The first measurement read **1.85x** on contingency with **44.7 % seam cost**,
+and it was tempting to call that the price of having a boundary. It was not.
+Per solve, against ~18 ms of actual `runpp`:
+
+```
+per-bus load lookup      3.15 ms   a pandas boolean mask PER BUS
+_rating_mva per line     0.98 ms   scalar .at lookup for a constant
+.iterrows() loops        0.85 ms   the classic pandas anti-pattern
+deepcopy of the net      5.40 ms   the independence guarantee
+```
+
+The first three are pure waste. Identity, topology, geometry and thermal
+ratings are properties of the network, not of a power flow over it, and were
+being recomputed on all 42 solves. They now live in `_static()`, computed once
+per case and joined onto each solve's results, with result columns read as
+numpy arrays instead of walked with `.iterrows()`. **Marshal 9.15 ms ->
+1.33 ms**, and byte-identical output — checked against the previous
+implementation over six specs spanning case14, case30 and case57.
+
+The deepcopy went differently. `Grid.Solver`'s guarantee — no mutable handle
+crosses the boundary, so solves cannot depend on their order — is a property of
+the **interface**; copying was one way to obtain it, never the guarantee
+itself. The seam now keeps one working network and resets only the columns a
+`SolveSpec` can touch. `INDEPENDENCE = "restore" | "copy"` selects either, and
+the claim is proven rather than asserted:
+
+```bash
+python3 native/compare.py --check-independence
+  PASS  restore == copy, spec by spec (45 specs)
+  PASS  N-1 sweep forward == reversed
+  PASS  N-1 sweep forward == shuffled
+  PASS  survives interleaving with other cases/specs
+```
+
+Contingency went **1.85x -> 1.22x** and seam cost **44.7 % -> 8.1 %** with no
+change to the interface and no change to a single output value. So the polyglot
+penalty here was roughly 85 % authoring quality and 15 % architecture — which
+is good news, because authoring quality is the fixable kind, and a warning,
+because nothing in the type system or the FFI-free-core rule says *you
+recomputed the thermal ratings forty-two times*. Only the measurement said it.
+
+#### What is left, and why metrics is different
+
+**Metrics' 4.45x barely moved, correctly.** It was never seam cost: 82 % of it
+is PureScript walking a 30-node graph where the reference calls networkx. That
+is the exhibit's actual claim — that degree and diameter arithmetic is *our*
+analysis, not domain expertise to be borrowed — so it is the price of a
+position, not a defect. 4.45x of 23 ms. Report it, never gate on it.
+
+Contingency's residual 22 % is ~1.6 ms per solve marshalling ~1,000 records for
+an analysis that reads four scalars from them. A narrower seam operation would
+recover part of it; at this size it is not worth a second entry point.
 
 None of these is a "PureScript is slow" result. The one measurement that would
 have been is the one that came out clean.
