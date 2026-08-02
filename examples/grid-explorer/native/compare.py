@@ -36,6 +36,7 @@
 import argparse
 import json
 import os
+import random
 import statistics
 import sys
 import time
@@ -152,6 +153,74 @@ def _strip(d, drop):
     return {k: v for k, v in d.items() if k not in drop}
 
 
+
+# ------------------------------------------------------ independence property
+
+
+def check_independence():
+    """Prove `Grid.Solver`'s ordering guarantee, rather than asserting it.
+
+    The seam keeps ONE working network and resets the mutable columns before
+    each solve, instead of deep-copying the reference network per call. That
+    costs 5.4 ms less per solve on case30, against 18 ms of actual power flow —
+    but only if the two strategies are genuinely interchangeable.
+
+    The documented guarantee is a property of the INTERFACE: no mutable handle
+    crosses the boundary, so solves cannot depend on the order they were issued
+    in. Copying was one way to obtain it, never the guarantee itself. So the
+    check is behavioural, not structural.
+    """
+    base = {"caseName": CASE, "loadFactor": LOAD_FACTOR, "loadsOut": []}
+    sweep = [dict(base, linesOut=[i]) for i in range(41)]
+    mixed = sweep + [
+        dict(base, linesOut=[35, 30, 32, 34], loadsOut=[24, 25, 26, 28, 29]),
+        {"caseName": "case14", "loadFactor": 1.2, "linesOut": [3], "loadsOut": [4]},
+        {"caseName": "case30", "loadFactor": 1.0, "linesOut": [1000], "loadsOut": []},
+        {"caseName": "case57", "loadFactor": 0.9, "linesOut": [7], "loadsOut": []},
+    ]
+
+    def run(strategy, specs):
+        SEAM.INDEPENDENCE = strategy
+        SEAM._WORK_CACHE.clear()
+        return [json.dumps(SEAM.solveImpl(dict(s)), sort_keys=True) for s in specs]
+
+    checks = []
+    checks.append(("restore == copy, spec by spec",
+                   run("copy", mixed) == run("restore", mixed)))
+
+    SEAM.INDEPENDENCE = "restore"
+    SEAM._WORK_CACHE.clear()
+    fwd = {i: json.dumps(SEAM.solveImpl(dict(base, linesOut=[i])), sort_keys=True)
+           for i in range(41)}
+
+    SEAM._WORK_CACHE.clear()
+    rev = {}
+    for i in reversed(range(41)):
+        rev[i] = json.dumps(SEAM.solveImpl(dict(base, linesOut=[i])), sort_keys=True)
+    checks.append(("N-1 sweep forward == reversed", fwd == rev))
+
+    order = list(range(41))
+    random.Random(7).shuffle(order)
+    SEAM._WORK_CACHE.clear()
+    shf = {i: json.dumps(SEAM.solveImpl(dict(base, linesOut=[i])), sort_keys=True)
+           for i in order}
+    checks.append(("N-1 sweep forward == shuffled", fwd == shf))
+
+    # The real hazard: other cases and other spec shapes in between.
+    inter = {}
+    for i in order:
+        inter[i] = json.dumps(SEAM.solveImpl(dict(base, linesOut=[i])), sort_keys=True)
+        SEAM.solveImpl(dict(base, linesOut=[35, 30, 32, 34],
+                            loadsOut=[24, 25, 26, 28, 29]))
+        SEAM.solveImpl({"caseName": "case14", "loadFactor": 1.2,
+                        "linesOut": [3], "loadsOut": [4]})
+    checks.append(("survives interleaving with other cases/specs", fwd == inter))
+
+    for label, ok in checks:
+        print(("  PASS  " if ok else "  FAIL  ") + label)
+    return 0 if all(ok for _, ok in checks) else 1
+
+
 # ---------------------------------------------------------------------- main
 
 
@@ -159,7 +228,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--reps", type=int, default=3, help="timed repetitions (median)")
+    ap.add_argument("--check-independence", action="store_true",
+                    help="prove the restore strategy equals the deepcopy one")
     args = ap.parse_args()
+
+    if args.check_independence:
+        return check_independence()
 
     scenarios = [
         ("contingency", poly_contingency, lambda: native.contingency(CASE, LOAD_FACTOR),

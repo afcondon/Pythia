@@ -58,6 +58,56 @@ def _base_net(case_name):
     return copy.deepcopy(_BASE_CACHE[case_name])
 
 
+# Which columns a `SolveSpec` is allowed to touch. Everything else about the
+# network is immutable, and the result tables are outputs — overwritten by the
+# next solve, so they need no restoring.
+_MUTABLE = (
+    ("line", "in_service"),
+    ("trafo", "in_service"),
+    ("load", "in_service"),
+    ("load", "p_mw"),
+    ("load", "q_mvar"),
+    ("gen", "in_service"),
+    ("ext_grid", "in_service"),
+)
+
+_WORK_CACHE = {}
+
+# "copy" deep-copies the reference network per solve; "restore" keeps one
+# working network and resets the mutable columns before each. Both give the
+# SAME GUARANTEE — the one `Grid.Solver` actually documents, that no mutable
+# handle crosses the boundary and solves cannot depend on their order. That is
+# a property of the interface, not of the implementation, and copying was only
+# ever one way to get it. Copying costs ~5.4 ms per solve on case30, against
+# 18 ms of actual power flow.
+#
+# `native/compare.py --check-independence` proves they agree: it diffs the two
+# strategies over a spec set and runs the N-1 sweep forward, reversed and
+# shuffled, asserting identical results. A guarantee that is only asserted in a
+# comment is not a guarantee.
+INDEPENDENCE = "restore"
+
+
+def _work_net(case_name):
+    """A network with the mutable columns reset to their reference values."""
+    if INDEPENDENCE == "copy":
+        return _base_net(case_name)
+
+    if case_name not in _WORK_CACHE:
+        net = _base_net(case_name)
+        baseline = {
+            (f, c): getattr(net, f)[c].values.copy()
+            for f, c in _MUTABLE
+            if c in getattr(net, f).columns
+        }
+        _WORK_CACHE[case_name] = (net, baseline)
+
+    net, baseline = _WORK_CACHE[case_name]
+    for (f, c), values in baseline.items():
+        getattr(net, f)[c] = values.copy()
+    return net
+
+
 def _layout(net):
     """Circular layout, purely for drawing — the frontend wants coordinates."""
     n = len(net.bus)
@@ -75,6 +125,91 @@ def _rating_mva(net, row):
     if row.max_i_ka and row.max_i_ka > 0:
         return float(row.max_i_ka * net.bus.at[row.from_bus, "vn_kv"] * np.sqrt(3))
     return 0.0
+
+
+_STATIC_CACHE = {}
+
+
+def _static(case_name):
+    """Everything about a case that no solve can change.
+
+    Identity, topology, geometry and thermal ratings are properties of the
+    network, not of a power flow over it. Recomputing them 42 times — once per
+    N-1 outage — is pure waste, and it was most of what the seam cost.
+
+    Measured on case30 before this existed: the per-bus load lookup alone was
+    3.15 ms of a 7.41 ms marshal, because it ran a pandas boolean mask per bus;
+    `_rating_mva` another 0.98 ms, doing a scalar `.at` lookup per line for a
+    number that never changes; `.iterrows()` a further 0.85 ms. Roughly 60 % of
+    "seam cost" was naive pandas rather than anything to do with having a seam.
+    """
+    if case_name in _STATIC_CACHE:
+        return _STATIC_CACHE[case_name]
+
+    net = _base_net(case_name)
+    pos = _layout(net)
+    slack = set(net.ext_grid.bus.values)
+    pv = set(net.gen.bus.values)
+
+    bus_ids = [int(i) for i in net.bus.index]
+    bus_static = []
+    for idx in net.bus.index:
+        x, y = pos.get(idx, (0.0, 0.0))
+        name = net.bus.at[idx, "name"] if "name" in net.bus.columns else None
+        bus_static.append({
+            "id": int(idx),
+            "name": str(name) if name else f"Bus {idx}",
+            "busType": "slack" if idx in slack else ("pv" if idx in pv else "pq"),
+            "hasGenerator": bool(idx in pv or idx in slack),
+            "x": x,
+            "y": y,
+        })
+
+    line_static = [
+        {
+            "id": int(idx),
+            "fromBus": int(row.from_bus),
+            "toBus": int(row.to_bus),
+            "maxLoadingMva": _num(_rating_mva(net, row)),
+            "isTransformer": False,
+        }
+        for idx, row in net.line.iterrows()
+    ]
+    trafo_static = [
+        {
+            "id": int(1000 + idx),
+            "fromBus": int(row.hv_bus),
+            "toBus": int(row.lv_bus),
+            "maxLoadingMva": _num(row.sn_mva) if row.sn_mva and row.sn_mva > 0 else 0.0,
+            "isTransformer": True,
+        }
+        for idx, row in net.trafo.iterrows()
+    ]
+
+    static = {
+        "busIds": bus_ids,
+        "buses": bus_static,
+        "lines": line_static,
+        "trafos": trafo_static,
+        "genBuses": [int(r.bus) for _, r in net.gen.iterrows()],
+        "extBuses": [int(r.bus) for _, r in net.ext_grid.iterrows()],
+        "baseMva": _num(net.sn_mva, 100.0) if hasattr(net, "sn_mva") else 100.0,
+    }
+    _STATIC_CACHE[case_name] = static
+    return static
+
+
+def _loads_by_bus(net):
+    """In-service load at every bus, in one grouped pass.
+
+    Was a pandas boolean mask per bus inside the marshalling loop — O(buses)
+    dataframe scans per solve, for a quantity one `groupby` answers.
+    """
+    live = net.load[net.load.in_service]
+    if len(live) == 0:
+        return {}, {}
+    grouped = live.groupby(live.bus.astype(int))[["p_mw", "q_mvar"]].sum()
+    return grouped.p_mw.to_dict(), grouped.q_mvar.to_dict()
 
 
 def _num(x, fallback=0.0):
@@ -104,93 +239,91 @@ def _num(x, fallback=0.0):
     return f if np.isfinite(f) else fallback
 
 
+def _col(frame, name, n):
+    """A result column as a plain numpy array, or NaNs if the solve has none."""
+    if frame is not None and len(frame) == n and name in frame.columns:
+        return frame[name].values
+    return np.full(n, np.nan)
+
+
 def _marshal(net, converged):
-    pos = _layout(net)
-    slack = set(net.ext_grid.bus.values)
-    pv = set(net.gen.bus.values)
+    """Solve results into plain records, joined onto the cached static data.
+
+    Reads each result column once as a numpy array and indexes positionally,
+    rather than walking `.iterrows()` and doing scalar `.at` lookups per field.
+    Same output, and the byte-equality of that is asserted in `native/compare.py`
+    against the pre-vectorisation implementation.
+    """
+    st = _static(str(net.name))
     has = converged and hasattr(net, "res_bus") and len(net.res_bus) > 0
 
+    n_bus = len(net.bus)
+    vm = _col(net.res_bus if has else None, "vm_pu", n_bus)
+    va = _col(net.res_bus if has else None, "va_degree", n_bus)
+    p_mw_by_bus, q_mvar_by_bus = _loads_by_bus(net)
+
     buses = []
-    for idx, row in net.bus.iterrows():
-        loads = net.load[(net.load.bus == idx) & net.load.in_service]
-        x, y = pos.get(idx, (0.0, 0.0))
-        # Energised: the solve produced a real voltage for this bus. An
-        # islanded bus is not "at 0 pu" (that would read as a catastrophic
-        # undervoltage) — it has no voltage, and the flag is how we say so.
-        vm = net.res_bus.at[idx, "vm_pu"] if has else None
-        energised = has and vm is not None and np.isfinite(vm)
+    for i, s in enumerate(st["buses"]):
+        energised = bool(has and np.isfinite(vm[i]))
+        bid = s["id"]
         buses.append({
-            "id": int(idx),
-            "name": str(row.get("name", "") or f"Bus {idx}"),
-            "busType": "slack" if idx in slack else ("pv" if idx in pv else "pq"),
-            "voltagePu": _num(vm, 1.0) if energised else 1.0,
-            "angleRad": _num(np.radians(net.res_bus.at[idx, "va_degree"])) if energised else 0.0,
-            "loadMw": _num(loads.p_mw.sum()) if len(loads) else 0.0,
-            "loadMvar": _num(loads.q_mvar.sum()) if len(loads) else 0.0,
-            "hasGenerator": bool(idx in pv or idx in slack),
-            "energised": bool(energised),
-            "x": x,
-            "y": y,
+            **s,
+            "voltagePu": _num(vm[i], 1.0) if energised else 1.0,
+            "angleRad": _num(np.radians(va[i])) if energised else 0.0,
+            "loadMw": _num(p_mw_by_bus.get(bid, 0.0)),
+            "loadMvar": _num(q_mvar_by_bus.get(bid, 0.0)),
+            "energised": energised,
         })
 
     lines = []
-    for idx, row in net.line.iterrows():
-        live = has and idx in net.res_line.index and bool(row.in_service)
-        loading = net.res_line.at[idx, "loading_percent"] if live else None
-        energised = live and np.isfinite(loading)
-        lines.append({
-            "id": int(idx),
-            "fromBus": int(row.from_bus),
-            "toBus": int(row.to_bus),
-            "loadingPercent": _num(loading) if energised else 0.0,
-            "maxLoadingMva": _num(_rating_mva(net, row)),
-            "inService": bool(row.in_service),
-            "energised": bool(energised),
-            "pFromMw": _num(net.res_line.at[idx, "p_from_mw"]) if energised else 0.0,
-            "qFromMvar": _num(net.res_line.at[idx, "q_from_mvar"]) if energised else 0.0,
-            "isTransformer": False,
-        })
-
-    # Transformers travel as branches too — the frontend draws them the same
-    # way — with ids offset so they stay distinguishable.
-    for idx, row in net.trafo.iterrows():
-        live = has and idx in net.res_trafo.index and bool(row.in_service)
-        loading = net.res_trafo.at[idx, "loading_percent"] if live else None
-        energised = live and np.isfinite(loading)
-        lines.append({
-            "id": int(1000 + idx),
-            "fromBus": int(row.hv_bus),
-            "toBus": int(row.lv_bus),
-            "loadingPercent": _num(loading) if energised else 0.0,
-            "maxLoadingMva": _num(row.sn_mva) if row.sn_mva and row.sn_mva > 0 else 0.0,
-            "inService": bool(row.in_service),
-            "energised": bool(energised),
-            "pFromMw": _num(net.res_trafo.at[idx, "p_hv_mw"]) if energised else 0.0,
-            "qFromMvar": _num(net.res_trafo.at[idx, "q_hv_mvar"]) if energised else 0.0,
-            "isTransformer": True,
-        })
+    for frame_name, res_name, static_key, p_col, q_col in (
+        ("line", "res_line", "lines", "p_from_mw", "q_from_mvar"),
+        # Transformers travel as branches too — the frontend draws them the
+        # same way — with ids offset so they stay distinguishable.
+        ("trafo", "res_trafo", "trafos", "p_hv_mw", "q_hv_mvar"),
+    ):
+        frame = getattr(net, frame_name)
+        n = len(frame)
+        res = getattr(net, res_name, None) if has else None
+        in_service = frame.in_service.values
+        loading = _col(res, "loading_percent", n)
+        p = _col(res, p_col, n)
+        q = _col(res, q_col, n)
+        for i, s in enumerate(st[static_key]):
+            live = bool(in_service[i])
+            energised = bool(has and live and np.isfinite(loading[i]))
+            lines.append({
+                **s,
+                "loadingPercent": _num(loading[i]) if energised else 0.0,
+                "inService": live,
+                "energised": energised,
+                "pFromMw": _num(p[i]) if energised else 0.0,
+                "qFromMvar": _num(q[i]) if energised else 0.0,
+            })
 
     generators = []
-    for idx, row in net.gen.iterrows():
-        live = has and idx in net.res_gen.index
-        generators.append({
-            "id": int(idx),
-            "bus": int(row.bus),
-            "pMw": _num(net.res_gen.at[idx, "p_mw"]) if live else 0.0,
-            "qMvar": _num(net.res_gen.at[idx, "q_mvar"]) if live else 0.0,
-            "inService": bool(row.in_service),
-            "pMaxMw": _num(row.max_p_mw) if "max_p_mw" in row else 0.0,
-        })
-    for idx, row in net.ext_grid.iterrows():
-        live = has and idx in net.res_ext_grid.index
-        generators.append({
-            "id": int(1000 + idx),
-            "bus": int(row.bus),
-            "pMw": _num(net.res_ext_grid.at[idx, "p_mw"]) if live else 0.0,
-            "qMvar": _num(net.res_ext_grid.at[idx, "q_mvar"]) if live else 0.0,
-            "inService": bool(row.in_service),
-            "pMaxMw": 0.0,
-        })
+    for frame_name, res_name, offset, max_col in (
+        ("gen", "res_gen", 0, "max_p_mw"),
+        ("ext_grid", "res_ext_grid", 1000, None),
+    ):
+        frame = getattr(net, frame_name)
+        n = len(frame)
+        res = getattr(net, res_name, None) if has else None
+        live_res = has and res is not None and len(res) == n
+        p = _col(res, "p_mw", n)
+        q = _col(res, "q_mvar", n)
+        buses_of = frame.bus.values
+        in_service = frame.in_service.values
+        max_p = frame[max_col].values if max_col and max_col in frame.columns else None
+        for i, idx in enumerate(frame.index):
+            generators.append({
+                "id": int(offset + idx),
+                "bus": int(buses_of[i]),
+                "pMw": _num(p[i]) if live_res else 0.0,
+                "qMvar": _num(q[i]) if live_res else 0.0,
+                "inService": bool(in_service[i]),
+                "pMaxMw": _num(max_p[i]) if max_p is not None else 0.0,
+            })
 
     # nansum, not sum: an islanded branch contributes no loss, and one NaN in
     # a plain sum would make the whole network total NaN.
@@ -218,7 +351,7 @@ def _marshal(net, converged):
 def solveImpl(spec):
     """EffectFn1 SolveSpec SolveOutcome — called saturated, so a plain def."""
     _t_seam = time.perf_counter()
-    net = _base_net(spec["caseName"])
+    net = _work_net(spec["caseName"])
 
     # Load scaling. This is what `loadFactor` was always documented to do and
     # never did: before this, the parameter was accepted and dropped, so every
@@ -237,10 +370,11 @@ def solveImpl(spec):
         elif lid in net.line.index:
             net.line.at[lid, "in_service"] = False
 
-    for bus_id in spec.get("loadsOut", []):
-        for idx in net.load.index:
-            if int(net.load.at[idx, "bus"]) == int(bus_id):
-                net.load.at[idx, "in_service"] = False
+    loads_out = spec.get("loadsOut", [])
+    if len(loads_out):
+        # One vectorised mask, not a scalar `.at` write per (load, bus) pair.
+        net.load.loc[net.load.bus.astype(int).isin([int(b) for b in loads_out]),
+                     "in_service"] = False
 
     _d = time.perf_counter() - _t_seam
     PERF["seam"] += _d
