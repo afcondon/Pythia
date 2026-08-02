@@ -1,4 +1,18 @@
 # Only the prebuilt output-py + requirements are needed to build the image.
+#
+# The stanza below looks redundant and is not. Docker will not re-include a
+# path whose PARENT is excluded, so `*` followed by `!columns/python/output-py`
+# ships nothing and the COPY fails with "not found". Each level has to be
+# re-included and then re-narrowed on the way down.
+#
+# Keep it this shape. The obvious simplification does not build. (The previous
+# version said `!output-py`, from before the 2026-07-30 restructure moved the
+# artefact under columns/python/ — so this Dockerfile had never built at all.)
 *
-!output-py
 !requirements.txt
+
+!columns
+columns/*
+!columns/python
+columns/python/*
+!columns/python/output-py
