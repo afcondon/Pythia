@@ -63,16 +63,88 @@ curl -s -X POST localhost:8082/api/simulate \
 
 At the default operating point — **case30 at load factor 0.7** — N-1 returns
 **4 critical, 8 warning, 29 safe** across 41 branches. Taking out line 35
-cascades: three lines trip and five buses island in round 0, four more trip in
-round 1; seven lines lost, 11.5 MW shed.
+cascades: lines 30, 32 and 34 trip and buses 24, 25, 26, 28 and 29 island in
+round 0; three lines lost, 11.55 MW shed, and the cascade settles.
 
-Every claim is checkable against the library directly:
+None of that is asserted on trust. `native/` holds a **second implementation of
+the same analysis with no PureScript in it at all** — straight pandapower,
+networkx and numpy — and `native/compare.py` runs both and diffs every field:
+
+```bash
+python3 native/compare.py          # correctness + the four performance ratios
+python3 native/compare.py --json   # machine-readable
+```
+
+All three scenarios currently agree field-for-field, including all 41
+contingency cases across 7 fields each and all 16 metric fields, to 1e-9.
 
 - **The power flow balances.** Generation 133.73 − load 132.44 = 1.29 MW, the
   reported losses.
 - **The graph metrics match networkx.** avgDegree 2.733, maxDegree 7,
-  diameter 6, one component — cross-checked against `nx.diameter` and friends.
-- **The N-1 counts match a direct pandapower sweep** at the same load factor.
+  diameter 6, one component — the reference computes these with `nx.diameter`
+  and friends, and the PureScript agrees.
+
+### The reference has already earned its keep
+
+The cascade above used to report **seven** lines lost over two rounds, and this
+README said so. It was wrong, and no smoke test could have caught it because
+the exhibit produced a plausible cascading picture either way.
+
+Once a round islands part of the network, the closed branches inside that
+island have no defined flow, and pandapower says so by reporting NaN. That NaN
+crossed the seam into PureScript, where **`nan > 100.0` evaluates to `true`** —
+`Ord Number` is `unsafeCompare`, which tries `<`, then `==`, and answers `GT`
+for anything it cannot order. This is upstream PureScript semantics, identical
+on the JavaScript backend; not a purepy divergence, and it was verified as such
+rather than assumed.
+
+So every de-energised branch read as "over its thermal rating" and the cascade
+tripped it. The fix is in two places, both of which are now stated contracts:
+the seam substitutes a defined value and sets an `energised` flag (see
+`_num` in `Grid_Solver_foreign.py`), and the core filters on that flag rather
+than trusting a comparison (`Grid.Types.inServiceLines`).
+
+The same NaNs were also travelling to the browser as bare `NaN` tokens, which
+are not valid JSON — `JSON.parse` rejects them. `compare.py` now parses every
+response with `parse_constant` set to raise, so that cannot come back.
+
+### What the architecture costs
+
+Four ratios rather than one number, because they call for different fixes.
+Median of three runs, M4 MBP, case30 at load factor 0.7:
+
+| scenario | architecture tax | structural distortion | displaced compute | seam cost |
+|---|---:|---:|---:|---:|
+| contingency (42 solves) | 1.85× | **1.02×** | 1.3 % | 44.7 % |
+| metrics (1 solve) | 4.80× | **1.00×** | 73.0 % | 12.0 % |
+| cascade (2 solves) | 1.80× | **0.97×** | 21.9 % | 34.0 % |
+
+**Structural distortion is the number that matters and it is ~1.00 across the
+board.** It is `poly_foreign / native_foreign`: time inside pandapower here
+against time inside pandapower there, for the same answer. At 1.0 the seam did
+not deform the computation — we call the library exactly as well as the
+single-language version does. That is the failure mode no in-process profiler
+can see, because a deformed computation makes foreign *share* rise and so reads
+as "clean architecture, the library dominates".
+
+The tax is real and it is elsewhere, and the split says exactly where:
+
+- **Contingency, 1.85×.** PureScript is 1.3 % of the wall clock. The cost is
+  the seam: per solve, 368 ms of `deepcopy` and 348 ms of marshalling across
+  42 solves, against 744 ms of actual power flow. The deepcopy is the price of
+  the independence guarantee `Grid.Solver` documents — no mutable handle
+  crosses the boundary, so calls cannot depend on their order. The marshalling
+  is a fat contract: the seam hands back the entire network, layout
+  coordinates included, when the N-1 verdict reads four scalars from it.
+  Both are **choices with known prices**, which is the point of measuring.
+- **Metrics, 4.80×.** 73 % displaced compute — PureScript walking a 30-node
+  graph where the reference calls networkx. That is not an accident either: the
+  exhibit's claim is that degree and diameter arithmetic is *our* analysis, not
+  domain expertise to be borrowed. 4.8× of 25 ms is what that position costs.
+- **Cascade, 1.80×.** Same seam story, two solves instead of 42.
+
+None of these is a "PureScript is slow" result. The one measurement that would
+have been is the one that came out clean.
 
 ## Why case30, and why a load factor
 

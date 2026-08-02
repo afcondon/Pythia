@@ -18,7 +18,7 @@ import Data.Foldable (sum)
 import Effect (Effect)
 import Grid.Graph (adjacencyFrom, islandedBuses)
 import Grid.Solver (baseSpec, solve, withLinesOut, withLoadsOut)
-import Grid.Types (BusState, LineState, SolveOutcome, branchEndpoints)
+import Grid.Types (BusState, LineState, SolveOutcome, branchEndpoints, inServiceLines)
 
 type CascadeConfig =
   { loadingThresholdPercent :: Number
@@ -104,10 +104,20 @@ simulate config name lf initial = do
           next <- solve (withLoadsOut shedBuses' (withLinesOut out' spec))
           go spec (round + 1) out' shedBuses' (snoc steps step) lost' next
 
--- | In-service branches past the trip threshold.
+-- | Branches carrying a defined flow that is past the trip threshold.
+-- |
+-- | The `energised` half of that (via `inServiceLines`) is load-bearing, and
+-- | its absence was a real and visible bug: once a round islands part of the
+-- | network, the closed branches inside the island report NaN loading, and
+-- | `nan > 100.0` is `true` in PureScript — `Ord Number` is `unsafeCompare`,
+-- | which answers `GT` for anything it cannot order. Every de-energised
+-- | branch therefore looked overloaded and was tripped, turning a
+-- | three-branch outage into a seven-branch one. The exhibit's README
+-- | documented the wrong number as a feature for months.
 overloadedIds :: CascadeConfig -> Array LineState -> Array Int
 overloadedIds config =
-  map _.id <<< filter (\l -> l.inService && l.loadingPercent > config.loadingThresholdPercent)
+  map _.id <<< filter (\l -> l.loadingPercent > config.loadingThresholdPercent)
+    <<< inServiceLines
 
 -- | Buses left with no path to a slack bus once `out` is open.
 islandsAfter :: SolveOutcome -> Array Int -> Array Int

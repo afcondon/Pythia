@@ -15,7 +15,7 @@ import Prelude
 
 import Data.Array (filter)
 import Data.Foldable (foldl)
-import Grid.Types (LineState, BusState, Severity(..))
+import Grid.Types (LineState, BusState, Severity(..), inServiceLines)
 
 -- | The thresholds a planner would argue about, in one record rather than
 -- | scattered through the classifier.
@@ -49,21 +49,27 @@ classify limits converged maxLoading minVoltage
   | minVoltage < limits.warningVoltagePu = Warning
   | otherwise = Safe
 
--- | Heaviest loading among in-service branches, with the branch that carries
--- | it. Out-of-service branches report 0 % and would otherwise look healthy.
+-- | Heaviest loading among branches carrying a defined flow, with the branch
+-- | that carries it. Out-of-service branches report 0 % and would otherwise
+-- | look healthy; de-energised ones have no loading at all (`inServiceLines`).
 worstLoading :: Array LineState -> { loading :: Number, lineId :: Int }
 worstLoading lines =
-  foldl step { loading: 0.0, lineId: -1 } (filter _.inService lines)
+  foldl step { loading: 0.0, lineId: -1 } (inServiceLines lines)
   where
   step acc l =
     if l.loadingPercent > acc.loading then { loading: l.loadingPercent, lineId: l.id }
     else acc
 
--- | Lowest bus voltage, with the bus. Seeded above any plausible per-unit
--- | value so the first bus always wins.
+-- | Lowest voltage among energised buses, with the bus. Seeded above any
+-- | plausible per-unit value so the first bus always wins.
+-- |
+-- | An islanded bus has no voltage. Filtering rather than relying on the
+-- | comparison is deliberate: a NaN would survive `<` here by accident, and
+-- | the same accident in the other direction is what the `>` in `worstLoading`
+-- | and in the cascade's trip test got wrong. See `Grid.Types.LineState`.
 worstVoltage :: Array BusState -> { voltage :: Number, busId :: Int }
 worstVoltage buses =
-  foldl step { voltage: 2.0, busId: -1 } buses
+  foldl step { voltage: 2.0, busId: -1 } (filter _.energised buses)
   where
   step acc b =
     if b.voltagePu < acc.voltage then { voltage: b.voltagePu, busId: b.id }

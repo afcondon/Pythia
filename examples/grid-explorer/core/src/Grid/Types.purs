@@ -84,6 +84,11 @@ severityLabel = case _ of
 
 -- | A bus after a solve. `voltagePu` is the per-unit magnitude — the quantity
 -- | the voltage half of the severity rule reads.
+-- |
+-- | `energised` says whether that voltage is a *result*. A bus cut off from
+-- | every source has no defined voltage, and the solver says so by returning
+-- | NaN. See the note on `LineState.energised`: the flag exists so that no
+-- | NaN ever reaches this side of the seam.
 type BusState =
   { id :: Int
   , name :: String
@@ -93,12 +98,31 @@ type BusState =
   , loadMw :: Number
   , loadMvar :: Number
   , hasGenerator :: Boolean
+  , energised :: Boolean
   , x :: Number
   , y :: Number
   }
 
 -- | A branch after a solve. Transformers arrive here too, with ids offset by
 -- | 1000, because the frontend draws them the same way.
+-- |
+-- | **`inService` and `energised` are different things, and conflating them
+-- | was a real bug.** `inService` is an input: we chose to open this branch.
+-- | `energised` is an output: the branch is closed, but it ended up inside an
+-- | island with no source, so it carries no defined flow.
+-- |
+-- | The distinction has to exist because `Ord Number` in PureScript is not a
+-- | total order and does not pretend to be. `compare` on Number is
+-- | `unsafeCompare`, which tests `<`, then `==`, and otherwise answers `GT` —
+-- | so `nan > 100.0` is `true`, on every backend, exactly as it is in the
+-- | JavaScript reference. A de-energised branch reporting NaN loading
+-- | therefore read as "over its thermal rating" and was tripped by the
+-- | cascade, which is how this exhibit came to claim seven lines lost from an
+-- | outage that actually loses three.
+-- |
+-- | The fix is at the seam, not here: it substitutes a defined value and sets
+-- | `energised` false, so the core never sees a NaN to compare. This module
+-- | assumes NaN-free `Number`s and that assumption is now the seam's contract.
 type LineState =
   { id :: Int
   , fromBus :: Int
@@ -106,6 +130,7 @@ type LineState =
   , loadingPercent :: Number
   , maxLoadingMva :: Number
   , inService :: Boolean
+  , energised :: Boolean
   , pFromMw :: Number
   , qFromMvar :: Number
   , isTransformer :: Boolean
@@ -144,8 +169,13 @@ type SolveOutcome =
   , totalLossMw :: Number
   }
 
+-- | Branches carrying a defined flow: closed, and inside an energised island.
+-- |
+-- | Every loading figure the analysis reads comes through here. A closed
+-- | branch in a dead island has no loading, and must not be averaged, ranked
+-- | or compared with one that has.
 inServiceLines :: Array LineState -> Array LineState
-inServiceLines = filter _.inService
+inServiceLines = filter \l -> l.inService && l.energised
 
 -- | Branch endpoints for the in-service subgraph — the input to every
 -- | connectivity question (`Grid.Graph`).
