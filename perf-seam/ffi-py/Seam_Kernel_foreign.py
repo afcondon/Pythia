@@ -95,8 +95,11 @@ def _verdict(sol, horizon):
     return 1.0 if t_end >= horizon else round(t_end / horizon, 4)
 
 
-# solveOrbit :: Number -> Number -> Number -> Number -> Number
-def solveOrbit(mu):
+# callLibrary :: Number -> Number -> Number -> Number -> Number
+# The shared PureScript names these three shape dials and a work dial; here
+# they are (mu, a, e, horizon_periods) because this backend binds an ODE
+# solver.
+def callLibrary(mu):
     def _a(a):
         def _e(e):
             def _h(horizon_periods):
@@ -115,8 +118,8 @@ def solveOrbit(mu):
     return _a
 
 
-# solveOrbitSamples :: Number -> Number -> Number -> Number -> Int -> Array Number
-def solveOrbitSamples(mu):
+# callLibraryPayload :: Number -> Number -> Number -> Number -> Int -> Array Number
+def callLibraryPayload(mu):
     def _a(a):
         def _e(e):
             def _h(horizon_periods):

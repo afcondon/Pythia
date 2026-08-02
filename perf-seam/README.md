@@ -69,15 +69,26 @@ called. Fit: `crossing ≈ 8.0 us + 0.17 % of the library call`.
 
 Fitted over the payload axis:
 
-| | per `Number` crossed | a 1,000-element return |
+| | per `Number` READ | folding 1,000 |
 |---|---:|---:|
 | **Jurist** (purejl) | ~1.9 ns | ~2 µs |
 | **Pythia** (purepy) | **~104 ns** | **~104 µs** |
 
-**Marshalling an `Array Number` costs purepy roughly 53× what it costs
-purejl.** The reason is structural rather than a defect: on Julia an
-`Array Number` is a contiguous `Vector{Float64}` and the fold compiles to
-native code; on Python it is a list of boxed floats walked by generated code.
+**Reading an `Array Number` costs purepy roughly 53× what it costs purejl.**
+Structural rather than a defect: on Julia it is a contiguous `Vector{Float64}`
+folded by native code, on Python a list of boxed floats walked by generated
+code.
+
+**It is the READ, not the crossing.** `Seam.ArrayCost` separates them by
+running the same call twice — once taking only `Array.length`, once folding
+every element — and gets 4,402 µs against 6,090 µs over 16,384 Numbers, i.e.
+103 ns for the fold and nothing for the transport. On purepy an `Array Number`
+*is* the Python list the foreign returned, so handing it across copies nothing:
+
+```bash
+.venv/bin/python -c "import sys; sys.path.insert(0,'output-py'); \
+    import Seam_ArrayCost; Seam_ArrayCost.main()"
+```
 
 This is the number that explains Grid Explorer. That exhibit measured **44.7 %
 seam cost** before its payload was narrowed and 8.1 % after, and it was
@@ -92,9 +103,10 @@ ecosystem from PureScript costs 1–3 % at any realistic *call* granularity, and
 the boundary itself is ~8 µs. But the return payload is not free the way it is
 on Julia, so:
 
-> On Pythia, return the answer, not the data. A seam that hands back a whole
-> result set pays ~100 ns per number for the privilege; one that hands back the
-> four scalars the caller actually reads does not.
+> On Pythia, don't make PureScript ITERATE a big foreign array. Passing one
+> onward costs nothing; folding it costs ~100 ns an element. A seam that hands
+> back a whole result set the core then walks pays for every field; one that
+> hands back the four scalars the caller reads does not.
 
 Both halves of that were learned the expensive way in Grid Explorer before this
 lane existed to price them.
