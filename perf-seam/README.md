@@ -134,6 +134,39 @@ a separate population that nothing exercises, because the corpus deliberately
 contains no foreign libraries. A perf lane with a checksum gate turned out to
 be a correctness instrument.
 
+### …so the lane now gates on that population deliberately
+
+`src/Seam/ForeignOrigin.purs` — byte-identical with the Jurist lane's copy,
+like the rest of `Seam/` — runs before any timing and holds the property the
+bug violated:
+
+```
+show x == show (widen x)      for every x, however x arrived
+```
+
+The rendering of a `Number` may depend on its **value** and must not depend on
+its **representation**. `asRepresentation` manufactures the fiction every FFI
+signature creates, handing back `float`, `numpy.float64`, `numpy.float32`,
+`Decimal` and `int` all typed as `Number`. It deliberately does not bind scipy:
+pinning the regression test to a library would make it track that library's
+release notes, and the hazard needs only the type promise.
+
+```bash
+.venv/bin/python -c "import sys; sys.path.insert(0,'output-py'); \
+    import Seam_ForeignOrigin; Seam_ForeignOrigin.main()"
+```
+
+Patch `n = float(n)` back out of `output-py/_purepy_runtime.py` and it doesn't
+merely fail, it raises: `repr(np.float64(1e-7))` is `np.float64(1e-07)` and the
+exponent parse dies on `'-07)'`. The pre-fix behaviour was a mixture of silent
+wrong digits and a confusing crash, which is what made it hard to attribute.
+
+The same audit found the identical hazard **unfixed in Jurist** — Julia's
+`Base.string` renders `Float32`, `Rational` and `BigFloat` each in its own
+notation — and found **Gnomon immune by construction**, because psgo's boxed
+`any` is unwrapped by a type assertion that panics instead of guessing. Full
+write-up in `docs/kb/reference/seam-tax.md`.
+
 ## Caveats
 
 - One library, one problem shape. scipy's `solve_ivp` returns a small object;

@@ -77,6 +77,17 @@ POLY = [PY, "-c",
         "import Seam_Main; Seam_Main.main()"]
 NATIVE = [PY, "native/seam_native.py"]
 
+# Runs before any timing, for the same reason the checksum gate does: a lane
+# whose renderings are wrong is not measuring a seam, it is measuring a bug.
+# See Seam/ForeignOrigin.purs — this is the only place in the repo where a
+# value ENTERS from the foreign side, and the differential corpus structurally
+# cannot cover that population. It was a checksum mismatch here that exposed
+# the numpy-2 `repr` bug in purepy's `show`, so this gate is the regression
+# test for a defect this lane found by accident.
+FOREIGN_ORIGIN = [PY, "-c",
+                  "import sys; sys.path.insert(0, 'output-py'); "
+                  "import Seam_ForeignOrigin; Seam_ForeignOrigin.main()"]
+
 
 def build():
     subprocess.run(["spago", "build", "--censor-stats"], cwd=HERE, check=True)
@@ -129,6 +140,12 @@ def main():
 
     if not args.skip_build:
         build()
+
+    print("  running foreign-origin gate ...", file=sys.stderr, flush=True)
+    p = subprocess.run(FOREIGN_ORIGIN, cwd=HERE, capture_output=True, text=True)
+    if p.returncode != 0:
+        sys.exit(f"foreign-origin gate failed:\n{p.stdout}\n{p.stderr}")
+    print("  " + p.stdout.strip().splitlines()[-1], file=sys.stderr)
 
     native = run(NATIVE, "native (plain Python)")
     poly = run(POLY, "polyglot (PureScript -> Python)")
@@ -249,9 +266,17 @@ def main():
               f" {best:.2f}x-{worst:.2f}x.")
         # The payload axis, priced per element. This is the axis that
         # separates the runtimes: the work axis says roughly the same thing
-        # everywhere, but marshalling an Array Number does not, because
+        # everywhere, but READING an Array Number does not, because
         # `Array Number` is a native contiguous vector on one runtime and a
         # list of boxed objects on another.
+        #
+        # CORRECTED 2026-08-02: first reported as marshalling — the cost of
+        # MOVING the array — and that was wrong. `Seam.ArrayCost` in the
+        # Pythia lane runs the identical foreign call twice, once taking only
+        # `Array.length` and once folding every element, and gets 4,402 us
+        # against 6,090 us over 16,384 Numbers. The crossing is free; the fold
+        # is the bill. Magnitude right, attribution wrong, and the design rule
+        # that follows is a different rule.
         pay = [r for r in results if r["axis"] == "payload"]
         if len(pay) >= 2:
             # x is Numbers crossed per call: the foreign returns 2 per sample.
@@ -263,11 +288,13 @@ def main():
             sxc = sum(x * y for x, y in zip(xs2, cs2))
             den2 = m * sxx - sx * sx
             per_elem_ns = 1000.0 * (m * sxc - sx * sc2) / den2 if den2 else 0.0
-            print(f"  Marshalling, fitted over the payload axis:"
-                  f"  {per_elem_ns:.0f} ns per Number crossed")
-            print(f"  At that rate a 1,000-element return costs"
-                  f" {per_elem_ns:.0f} us per call, so a seam that hands back")
-            print("  a whole result set pays for it in a way a scalar seam never sees.")
+            print(f"  Reading the payload, fitted over that axis:"
+                  f"  {per_elem_ns:.0f} ns per Number FOLDED")
+            print(f"  At that rate folding a 1,000-element return costs"
+                  f" {per_elem_ns:.0f} us per call. This is the fold, not the")
+            print("  transport: passing a foreign array onward costs almost nothing.")
+            print("  So the rule is DON'T ITERATE A BIG FOREIGN ARRAY, which is a")
+            print("  weaker constraint than 'don't return one'.")
             print()
 
         d = max(r["distortion"] for r in results)
