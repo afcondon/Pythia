@@ -44,3 +44,9 @@ __pycache__/
 companion/*/output/
 companion/*/output-py/
 companion/*/.spago/
+
+# The seam-tax lane's build products
+perf-seam/output/
+perf-seam/output-py/
+perf-seam/.spago/
+perf-seam/.venv
