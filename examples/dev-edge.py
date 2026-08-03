@@ -15,9 +15,9 @@ edge as the front door (boot order: backends -> edge).
 
 Route table (mirrors the Docker edge):
     /ee/api/*  -> embedding-explorer backend (default :8081)   [proxy]
-    /ee/*      -> hypo-punter/ee-website/public               [static]
+    /ee/*      -> polyglot-pythia-showcases/ee-website/public               [static]
     /ge/api/*  -> grid-explorer backend (default :8082)       [proxy]
-    /ge/*      -> hypo-punter/ge-website/public               [static]
+    /ge/*      -> polyglot-pythia-showcases/ge-website/public               [static]
     /atlas/*   -> stub until Atlas is wired locally           [static stub]
     /          -> website (static-httpd, default :3040)       [proxy — catch-all]
 
@@ -43,7 +43,7 @@ import urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-SHOWCASES = Path(__file__).resolve().parents[3] / "purescript-hylograph-showcases" / "hypo-punter"
+SHOWCASES = Path(__file__).resolve().parents[3] / "purescript-hylograph-showcases" / "polyglot-pythia-showcases"
 
 CONTENT_TYPES = {".html": "text/html", ".js": "application/javascript",
                  ".mjs": "text/javascript", ".css": "text/css",

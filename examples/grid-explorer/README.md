@@ -44,7 +44,7 @@ stack exec --stack-yaml ../../../../stack.yaml purepy -- output output-py
 ../../.venv/bin/python output-py          # Flask on http://localhost:3033
 ```
 
-Port 3033 matches hypo-punter's docker-compose table, so the `ge-website`
+Port 3033 matches polyglot-pythia-showcases's docker-compose table, so the `ge-website`
 frontend works against this server unchanged. The frontend lives there, not
 here — this example is the API server only.
 
