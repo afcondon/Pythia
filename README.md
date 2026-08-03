@@ -121,7 +121,11 @@ per-backend divergence ledgers.
 - `docs/design-decisions/` — ADRs (family format)
 - `docs/` — design direction + carried-over analyses (UTF-16 audit,
   tailrec notes, Aff/asyncio design)
-- `test-project/`, `bundle/`, `ci/` — first-incarnation artifacts,
-  pending cleanup. (The first incarnation's two compiler implementations
-  were retired to git history per ADR-0001 — see the `attic/` removal
-  commit.)
+  (The first incarnation's two compiler implementations were retired to
+  git history per ADR-0001 — see the `attic/` removal commit. Its
+  remaining artifacts, `test-project/` and `bundle/`, followed on
+  2026-08-03: `test-project` path-depended on a
+  `../../visualisation libraries/purescript-psd3-selection` that no
+  longer exists, so it had not built since the reboot and was in no
+  live lane. PSD3 was the predecessor of Hylograph; nothing current
+  depends on it.)
