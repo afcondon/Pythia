@@ -5,6 +5,7 @@ module Test.Numbers where
 
 import Prelude
 
+import Data.Array as Array
 import Data.Int as Int
 import Data.Int.Bits as Bits
 import Data.Number as Num
@@ -14,6 +15,10 @@ import Effect.Console (log)
 
 t :: String -> String -> Effect Unit
 t name v = log ("TEST " <> name <> ": " <> v)
+
+-- | The EuclideanRing law that ties div to mod.
+divModLaw :: Int -> Int -> Boolean
+divModLaw a b = b * (a / b) + a `mod` b == a
 
 main :: Effect Unit
 main = do
@@ -31,6 +36,20 @@ main = do
   t "int-mod-negdiv" (show (7 `mod` (-2)))
   t "int-div-zero" (show (7 / 0))
   t "int-mod-zero" (show (7 `mod` 0))
+  -- Negative DIVISORS. JS intDiv is Euclidean (y > 0 ? floor(x/y) :
+  -- -floor(x/-y)); that differs from floor division only when the divisor is
+  -- negative, and none of the cases above has one. The operands come from a
+  -- foreign call (Array.length), so neither purs nor the optimizer can fold
+  -- them: the runtime's own intDiv/intMod is what runs.
+  let seven = Array.length (Array.replicate 7 unit)
+      two = Array.length (Array.replicate 2 unit)
+  t "int-div-negdiv" (show (seven / negate two))
+  t "int-div-negneg" (show (negate seven / negate two))
+  t "int-mod-negneg" (show (negate seven `mod` negate two))
+  t "int-div-negdiv-exact" (show (negate (seven * two) / negate two))
+  t "int-div-neg-runtime" (show (negate seven / two))
+  t "int-divmod-law-negdiv" (show (divModLaw seven (negate two)))
+  t "int-divmod-law-negneg" (show (divModLaw (negate seven) (negate two)))
   t "int-gcd" (show (gcd 12 18))
   t "int-lcm" (show (lcm 4 6))
   -- truncating quot/rem
