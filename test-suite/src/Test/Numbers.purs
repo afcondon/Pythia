@@ -20,6 +20,13 @@ t name v = log ("TEST " <> name <> ": " <> v)
 divModLaw :: Int -> Int -> Boolean
 divModLaw a b = b * (a / b) + a `mod` b == a
 
+-- | Integer division inside a self-recursive loop whose registers are all Int.
+-- | An optimizing backend may unbox such a loop to native machine ints and do
+-- | the division natively rather than through the foreign intDiv; this pins
+-- | that path to Euclidean semantics too (native `/` usually truncates).
+divLoop :: Int -> Int -> Int -> Int
+divLoop acc d n = if n == 0 then acc else divLoop (acc + negate (n * 7) / d) d (n - 1)
+
 main :: Effect Unit
 main = do
   log "=== Test.Numbers ==="
@@ -50,6 +57,8 @@ main = do
   t "int-div-neg-runtime" (show (negate seven / two))
   t "int-divmod-law-negdiv" (show (divModLaw seven (negate two)))
   t "int-divmod-law-negneg" (show (divModLaw (negate seven) (negate two)))
+  t "int-div-loop-posdiv" (show (divLoop 0 two 5))
+  t "int-div-loop-negdiv" (show (divLoop 0 (negate two) 5))
   t "int-gcd" (show (gcd 12 18))
   t "int-lcm" (show (lcm 4 6))
   -- truncating quot/rem
