@@ -55,6 +55,7 @@ place:
 | 0001 | [Reboot as a Jurist-sibling from-scratch compiler](0001-reboot-as-jurist-sibling.md) | Accepted |
 | 0002 | [Expression emission with module-level lambda lifting](0002-expression-emission-lambda-lifting.md) | Accepted |
 | 0003 | [Two implementations: `purepy` the oracle, `backend-py` the optimizer consumer](0003-two-implementations.md) | Accepted |
+| 0004 | [Saturated calls and the purs inliner set](0004-saturated-calls-and-inliner.md) | Accepted (2026-10-27; supersedes the curried-call part of 0002) |
 
 ## Scope
 

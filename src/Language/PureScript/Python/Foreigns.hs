@@ -1039,9 +1039,13 @@ builtinForeigns =
       , "_min = min"
       -- Math.max/min return NaN if EITHER argument is NaN. Python's built-ins
       -- keep whichever argument a false comparison leaves them holding, so
-      -- max(1.0, nan) was 1.0.
-      , "def max(n1): return lambda n2: n1 if n1 != n1 else (n2 if n2 != n2 else _max(n1, n2))"
-      , "def min(n1): return lambda n2: n1 if n1 != n1 else (n2 if n2 != n2 else _min(n1, n2))"
+      -- max(1.0, nan) was 1.0. They also order -0.0 below +0.0, where
+      -- Python's see two equal values and keep the first: min(0.0, -0.0)
+      -- was 0.0 (ledger NEGZERO-num-min-zeros, found once X1's negate made
+      -- the -0.0 real). Go's math.Min already says -0.
+      , "def _zeros(n1, n2): return n1 == 0.0 and n2 == 0.0"
+      , "def max(n1): return lambda n2: n1 if n1 != n1 else (n2 if n2 != n2 else ((n2 if _math.copysign(1.0, n1) < 0 else n1) if _zeros(n1, n2) else _max(n1, n2)))"
+      , "def min(n1): return lambda n2: n1 if n1 != n1 else (n2 if n2 != n2 else ((n1 if _math.copysign(1.0, n1) < 0 else n2) if _zeros(n1, n2) else _min(n1, n2)))"
       -- ECMAScript Math.pow is NOT IEEE pow, and the ORDER of its rules is
       -- the whole of the difference: a zero exponent wins even over a NaN
       -- base, so `Math.pow(NaN, 0)` is 1 and not NaN. Testing NaN first got
