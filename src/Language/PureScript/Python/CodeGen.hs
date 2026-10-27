@@ -46,7 +46,9 @@
 --   * Records are dicts; update is @{**rec, "k": v}@.
 --   * Arrays are lists.
 --   * Effects are zero-argument closures (thunks).
---   * Functions are curried unary closures; application is @(f)(x)(y)@.
+--   * Functions are curried unary closures; application is @(f)(x)(y)@,
+--     except a saturated call of a known-arity top-level function, which
+--     calls its n-ary def (ADR-0004, below).
 --
 -- Pattern bindings are confined to a per-alternative IIFE: a walrus
 -- binding anywhere in a lambda makes that name local THROUGHOUT the
@@ -77,6 +79,15 @@
 -- references the binding itself (self-calls become tuples), so it lifts
 -- like any other code.
 --
+-- Saturated calls and the inliner (ADR-0004):
+--
+-- A top-level binding that is an n-deep lambda chain also gets a plain
+-- n-ary def, @_ps_sat_f(a, b, c)@, and a call that supplies at least n
+-- arguments calls it directly (across modules, @_psmod_M._ps_sat_f@). The
+-- curried @f@ stays, as a thin wrapper, for first-class use. Then purs's
+-- JS inliner set: runFnN/mkFnN and their Effect/ST forms, primitive ops
+-- through a known dictionary, saturated constructors.
+--
 -- Known v1 limitations (as Jurist):
 --
 --   * Mutual recursion is not trampolined (matches the JS backend, where
@@ -88,14 +99,19 @@
 --
 module Language.PureScript.Python.CodeGen
   ( generateModulePy
+  , Known
+  , knownBindings
   ) where
 
 import Prelude
 
 import Control.Monad.State.Strict (State, evalState, get, modify, put)
 import Data.List (partition)
+import Data.Map (Map)
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Text.Read (readMaybe)
 
 import qualified Language.PureScript as P
 import qualified Language.PureScript.CoreFn as CoreFn
@@ -146,9 +162,121 @@ withLate lt act = do
 -- compute the free variables a lifted lambda must close over.
 type Env = Set.Set T.Text
 
+-- | What the whole program knows about one top-level binding (ADR-0004).
+data KnownDef
+  = KnownFn Int            -- ^ a lambda chain this many parameters deep
+  | KnownCtor CtorShape    -- ^ a constructor
+  -- | A top-level name applied to top-level names, such as the
+  -- @negate = Data.Ring.negate ringNumber@ that CoreFn floats out of every
+  -- use of a dictionary method. purs's inliner looks through these (its
+  -- "expander"), and so do we.
+  | KnownAlias P.ModuleName P.Ident [CoreFn.Expr CoreFn.Ann]
+
+data CtorShape
+  = CtorNewtype            -- ^ erased: the constructor is the identity
+  | CtorDict [P.Ident]     -- ^ a type-class dictionary: a dict of its fields
+  | CtorData T.Text Int    -- ^ a data constructor: tag and field count
+
+-- | Every top-level binding whose shape is known, keyed by module.
+type Known = Map (P.ModuleName, P.Ident) KnownDef
+
+-- | The arity map: one fold over every module's declarations, so a call in
+-- one module is saturated against a definition in another. Foreigns are
+-- not declarations, so they never appear and stay curried.
+knownBindings :: [CoreFn.Module CoreFn.Ann] -> Known
+knownBindings mods = Map.fromList
+  [ ((CoreFn.moduleName m, ident), k)
+  | m <- mods
+  , bind <- CoreFn.moduleDecls m
+  , (ident, expr) <- case bind of
+      CoreFn.NonRec _ i e -> [(i, e)]
+      CoreFn.Rec bs -> [ (i, e) | ((_, i), e) <- bs ]
+  , Just k <- [knownDef expr] ]
+  where
+    knownDef = \case
+      CoreFn.Constructor ann _ (P.ProperName ctor) fields -> Just . KnownCtor $ case ann of
+        (_, _, Just CoreFn.IsNewtype) -> CtorNewtype
+        (_, _, Just CoreFn.IsTypeClassConstructor) -> CtorDict fields
+        _ -> CtorData (escapeStringPy ctor) (length fields)
+      expr@(CoreFn.App {})
+        | (CoreFn.Var _ (P.Qualified (P.ByModuleName mn) i), args) <- spine expr
+        , all isTopVar args -> Just (KnownAlias mn i args)
+      expr -> case abss expr of
+        0 -> Nothing
+        n -> Just (KnownFn n)
+    isTopVar = \case
+      CoreFn.Var _ (P.Qualified (P.ByModuleName _) _) -> True
+      _ -> False
+    abss (CoreFn.Abs _ _ b) = 1 + abss b
+    abss _ = 0 :: Int
+
+-- | @f a1 .. an@ as @(f, [a1 .. an])@.
+spine :: CoreFn.Expr CoreFn.Ann -> (CoreFn.Expr CoreFn.Ann, [CoreFn.Expr CoreFn.Ann])
+spine = go []
+  where
+    go args (CoreFn.App _ fn arg) = go (arg : args) fn
+    go args other = (other, args)
+
+-- | The n-ary def behind saturated calls of the top-level binding @name@,
+-- in the generated-name namespace (see 'genPrefix').
+satName :: T.Text -> T.Text
+satName name = genPrefix <> "sat_" <> name
+
+-- | One inlined dictionary operation (ADR-0004).
+data DictOp
+  = OpBinary T.Text   -- ^ a Python binary operator
+  | OpUnary T.Text    -- ^ a Python unary operator
+  | OpCall T.Text     -- ^ a two-argument runtime helper
+  | OpValue T.Text    -- ^ a constant (@zero@, @top@, ...)
+
+-- | purs's @inlineCommonOperators@ and @inlineCommonValues@, keyed by
+-- (method module, method, dictionary module, dictionary). Each means what
+-- the Data_*_foreign.py shim it bypasses means.
+dictOps :: [((T.Text, T.Text, T.Text, T.Text), DictOp)]
+dictOps =
+  [ (("Data.Semiring", m, "Data.Semiring", d), op)
+  | d <- ["semiringInt", "semiringNumber"]
+  , (m, op) <- [("add", OpBinary "+"), ("mul", OpBinary "*")] ] ++
+  [ (("Data.Semiring", "zero", "Data.Semiring", "semiringInt"), OpValue "0")
+  , (("Data.Semiring", "one", "Data.Semiring", "semiringInt"), OpValue "1")
+  , (("Data.Semiring", "zero", "Data.Semiring", "semiringNumber"), OpValue "0.0")
+  , (("Data.Semiring", "one", "Data.Semiring", "semiringNumber"), OpValue "1.0")
+  , (("Data.Ring", "sub", "Data.Ring", "ringInt"), OpBinary "-")
+  , (("Data.Ring", "sub", "Data.Ring", "ringNumber"), OpBinary "-")
+  , (("Data.Ring", "negate", "Data.Ring", "ringInt"), OpUnary "-")
+  , (("Data.Ring", "negate", "Data.Ring", "ringNumber"), OpUnary "-")
+  -- Python raises on x / 0.0; the runtime's _num_div is the JS division
+  -- the numDiv shim computes.
+  , (("Data.EuclideanRing", "div", "Data.EuclideanRing", "euclideanRingNumber"), OpCall "_num_div")
+  , (("Data.Semigroup", "append", "Data.Semigroup", "semigroupString"), OpBinary "+")
+  , (("Data.HeytingAlgebra", "conj", "Data.HeytingAlgebra", "heytingAlgebraBoolean"), OpBinary "and")
+  , (("Data.HeytingAlgebra", "disj", "Data.HeytingAlgebra", "heytingAlgebraBoolean"), OpBinary "or")
+  , (("Data.HeytingAlgebra", "not", "Data.HeytingAlgebra", "heytingAlgebraBoolean"), OpUnary "not ")
+  , (("Data.Bounded", "top", "Data.Bounded", "boundedBoolean"), OpValue "True")
+  , (("Data.Bounded", "bottom", "Data.Bounded", "boundedBoolean"), OpValue "False")
+  ] ++
+  [ (("Data.Eq", m, "Data.Eq", d), OpBinary o)
+  | d <- ["eqInt", "eqNumber", "eqString", "eqChar", "eqBoolean"]
+  , (m, o) <- [("eq", "=="), ("notEq", "!=")] ] ++
+  [ (("Data.Ord", m, "Data.Ord", d), OpBinary o)
+  | d <- ["ordInt", "ordNumber", "ordString", "ordChar", "ordBoolean"]
+  , (m, o) <- [("lessThan", "<"), ("lessThanOrEq", "<="), ("greaterThan", ">"), ("greaterThanOrEq", ">=")] ]
+
+-- | Data.Int.Bits, as Data_Int_Bits_foreign.py computes it (@_int32@ is the
+-- runtime's copy of its @_toInt32i@).
+bitOp :: T.Text -> T.Text -> T.Text -> Maybe T.Text
+bitOp fn a b = case fn of
+  "and" -> Just ("(" <> a <> " & " <> b <> ")")
+  "or"  -> Just ("(" <> a <> " | " <> b <> ")")
+  "xor" -> Just ("(" <> a <> " ^ " <> b <> ")")
+  "shl" -> Just ("_int32(" <> a <> " << (" <> b <> " & 31))")
+  "shr" -> Just ("(_int32(" <> a <> ") >> (" <> b <> " & 31))")
+  "zshr" -> Just ("((_int32(" <> a <> ") & 0xFFFFFFFF) >> (" <> b <> " & 31))")
+  _ -> Nothing
+
 -- | Generate the Python body (declarations only, no module header) for a module
-generateModulePy :: CoreFn.Module CoreFn.Ann -> T.Text
-generateModulePy cfModule =
+generateModulePy :: Known -> CoreFn.Module CoreFn.Ann -> T.Text
+generateModulePy known cfModule =
   T.unlines $ evalState (concat <$> mapM genTop (CoreFn.moduleDecls cfModule)) (0, [], Set.empty)
   where
     genTop :: CoreFn.Bind CoreFn.Ann -> Gen [T.Text]
@@ -166,9 +294,12 @@ generateModulePy cfModule =
 
     -- | Generate a top-level binding, tracking names in the current Rec group
     generateBinding :: CoreFn.Bind CoreFn.Ann -> Gen T.Text
-    generateBinding (CoreFn.NonRec _ ident expr) = do
-      rhs <- generateInlineAbs Set.empty [] expr
-      pure (identName ident <> " = " <> rhs)
+    generateBinding (CoreFn.NonRec _ ident expr)
+      | Just (KnownFn _) <- Map.lookup (currentModule, ident) known =
+          satBinding [] ident expr
+      | otherwise = do
+          rhs <- generateInlineAbs Set.empty [] expr
+          pure (identName ident <> " = " <> rhs)
     generateBinding (CoreFn.Rec bindings) = do
       -- Rec handling, in order of preference per binding:
       --   1. TCO: all self-refs are saturated tail calls -> dispatch loop,
@@ -197,14 +328,8 @@ generateModulePy cfModule =
             not $ Set.null $ Set.intersection (collectLocalRefs currentModule expr) valueNames
           (recursive, nonRecursive) = partition needsThunk values
           recNames = [identName ident | ((_, ident), _) <- recursive]
-      tcoDefs <- mapM (\(ident, ps, body) -> do
-                        rhs <- generateTcoExpr Set.empty recNames (identName ident) ps body
-                        pure (identName ident <> " = " <> rhs))
-                      tcoBindings
-      funDefs <- mapM (\((_, ident), expr) -> do
-                        rhs <- generateInlineAbs Set.empty recNames expr
-                        pure (identName ident <> " = " <> rhs))
-                      functions
+      tcoDefs <- mapM (\(ident, ps, body) -> satTco recNames ident ps body) tcoBindings
+      funDefs <- mapM (\((_, ident), expr) -> satBinding recNames ident expr) functions
       nonRecDefs <- mapM (\((_, ident), expr) -> do
                            rhs <- generateInlineAbs Set.empty recNames expr
                            pure (identName ident <> " = " <> rhs))
@@ -223,6 +348,36 @@ generateModulePy cfModule =
 
     identName :: P.Ident -> T.Text
     identName = identToPyName
+
+    -- | A known-arity function (ADR-0004): the n-ary def that saturated
+    -- calls reach, then the curried binding as a thin wrapper over it.
+    satBinding :: [T.Text] -> P.Ident -> CoreFn.Expr CoreFn.Ann -> Gen T.Text
+    satBinding recNames ident expr = do
+      let (params, body) = peelAbs expr
+          names = uniquifyParams (map identName params)
+      bodyTxt <- generateExpr (Set.fromList names) recNames body
+      pure (satDef ident names bodyTxt)
+
+    -- | A self-tail-recursive one: the loop function is a module-level
+    -- lambda, and the n-ary def runs it.
+    satTco :: [T.Text] -> P.Ident -> [P.Ident] -> CoreFn.Expr CoreFn.Ann -> Gen T.Text
+    satTco recNames ident params body = do
+      let names = uniquifyParams (map identName params)
+          self = identName ident
+          loopName = genPrefix <> "tco_" <> self
+      tailTxt <- generateTailExpr (Set.fromList names) recNames self (length names) body
+      pure (loopName <> " = lambda " <> T.intercalate ", " names <> ": " <> tailTxt <> "\n"
+            <> satDef ident names
+                 ("_tco_run(" <> loopName <> ", (" <> T.intercalate ", " names <> ",))"))
+
+    satDef :: P.Ident -> [T.Text] -> T.Text -> T.Text
+    satDef ident names bodyTxt =
+      let name = identName ident
+          args = [ "_a" <> T.pack (show i) | i <- [0 .. length names - 1] ]
+          wrapper = foldr (\a acc -> "(lambda " <> a <> ": " <> acc <> ")")
+                          (satName name <> "(" <> T.intercalate ", " args <> ")") args
+      in "def " <> satName name <> "(" <> T.intercalate ", " names <> "): return " <> bodyTxt
+         <> "\n" <> name <> " = " <> wrapper
 
     -- | Compile an outermost Abs chain inline (curried literal lambdas)
     -- rather than lifting it. Used where late binding of the name being
@@ -260,6 +415,15 @@ generateModulePy cfModule =
         a <- generateExpr env recNames arg
         pure ("(" <> f <> ")(" <> a <> ")")
 
+      e@(CoreFn.App {})
+        | (CoreFn.Var _ (P.Qualified (P.ByModuleName mn) ident), args) <- unApp e
+        , Just (k, call) <- inlineApp env recNames mn ident args
+                              `orElse` saturate env recNames mn ident args
+                              `orElse` throughAlias env recNames mn ident args -> do
+            r <- call
+            rest <- mapM (generateExpr env recNames) (drop k args)
+            pure (foldl (\acc a -> "(" <> acc <> ")(" <> a <> ")") r rest)
+
       CoreFn.App _ fn arg -> do
         f <- generateExpr env recNames fn
         a <- generateExpr env recNames arg
@@ -287,6 +451,148 @@ generateModulePy cfModule =
 
       CoreFn.Constructor ann _ (P.ProperName ctor) fields ->
         pure (constructorToPy ann ctor fields)
+
+    -- ---------------------------------------------------------------
+    -- Saturated calls and the inliner (ADR-0004)
+    -- ---------------------------------------------------------------
+    --
+    -- An application spine whose head is a top-level name: an inliner rule
+    -- for that name (purs's JS CoreImp set) replaces the call; else a known
+    -- function of arity n is called through its n-ary def with the first n
+    -- arguments; else a known constructor applied to all its fields is
+    -- built in place. Each returns how many arguments it took; the rest are
+    -- applied curried. Arguments are pure, and the intermediate closures of
+    -- a lambda chain do nothing but capture, so no result changes.
+
+    saturate :: Env -> [T.Text] -> P.ModuleName -> P.Ident -> [CoreFn.Expr CoreFn.Ann]
+             -> Maybe (Int, Gen T.Text)
+    saturate env recNames mn ident args = case Map.lookup (mn, ident) known of
+      Just (KnownFn n) | length args >= n -> Just (n, do
+        as <- mapM (generateExpr env recNames) (take n args)
+        let qual = if mn == currentModule then "" else pyModuleAlias mn <> "."
+        pure (qual <> satName (identName ident) <> "(" <> T.intercalate ", " as <> ")"))
+      Just (KnownCtor CtorNewtype) | (a : _) <- args -> Just (1, generateExpr env recNames a)
+      Just (KnownCtor (CtorData tag n)) | n > 0, length args >= n -> Just (n, do
+        as <- mapM (generateExpr env recNames) (take n args)
+        pure ("(\"" <> tag <> "\", " <> T.intercalate ", " as <> ")"))
+      Just (KnownCtor (CtorDict fields)) | not (null fields), length args >= length fields ->
+        Just (length fields, do
+          as <- mapM (generateExpr env recNames) (take (length fields) args)
+          pure ("{" <> T.intercalate ", "
+                   [ "\"" <> escapeStringPy (runIdent' f) <> "\": " <> a | (f, a) <- zip fields as ]
+                <> "}"))
+      _ -> Nothing
+
+    -- | Through a module-level alias, when that reaches past the alias's
+    -- own arguments into the call's.
+    throughAlias :: Env -> [T.Text] -> P.ModuleName -> P.Ident -> [CoreFn.Expr CoreFn.Ann]
+                 -> Maybe (Int, Gen T.Text)
+    throughAlias env recNames mn ident args = case Map.lookup (mn, ident) known of
+      Just (KnownAlias amn aident pre)
+        | let args' = pre ++ args
+        , Just (k, call) <- inlineApp env recNames amn aident args'
+                              `orElse` saturate env recNames amn aident args'
+        , k > length pre -> Just (k - length pre, call)
+      _ -> Nothing
+
+    -- | purs's JS inliner (CoreImp/Optimizer/Inliner.hs), rule for rule. Fn
+    -- values are plain n-ary Python callables, an EffectFn runs its effect
+    -- when called (the Data_Function_Uncurried and Effect_Uncurried shims).
+    inlineApp :: Env -> [T.Text] -> P.ModuleName -> P.Ident -> [CoreFn.Expr CoreFn.Ann]
+              -> Maybe (Int, Gen T.Text)
+    inlineApp env recNames (P.ModuleName mn) (P.Ident fn) args
+      | mn == "Data.Function.Uncurried", Just n <- suffix "runFn", n /= 1
+      , (f : rest) <- args, length rest >= n = Just (n + 1, do
+          f' <- gen f
+          as <- mapM gen (take n rest)
+          pure ("(" <> f' <> ")(" <> T.intercalate ", " as <> ")"))
+      | mn == "Data.Function.Uncurried", Just n <- suffix "mkFn", n /= 1
+      , (f : _) <- args, Just m <- liftN env recNames n f id = Just (1, m)
+      | mn `elem` ["Effect.Uncurried", "Control.Monad.ST.Uncurried"]
+      , Just n <- suffix "runEffectFn" `orElse` suffix "runSTFn", n >= 1
+      , (f : rest) <- args, length rest >= n = Just (n + 1, do
+          f' <- gen f
+          as <- mapM gen (take n rest)
+          pure ("(lambda: (" <> f' <> ")(" <> T.intercalate ", " as <> "))"))
+      | mn `elem` ["Effect.Uncurried", "Control.Monad.ST.Uncurried"]
+      , Just n <- suffix "mkEffectFn" `orElse` suffix "mkSTFn", n >= 1
+      , (f : _) <- args, Just m <- liftN env recNames n f (\b -> "(" <> b <> ")()") = Just (1, m)
+      | (CoreFn.Var _ (P.Qualified (P.ByModuleName (P.ModuleName dm)) (P.Ident dict)) : rest) <- args
+      , Just op <- lookup (mn, fn, dm, dict) dictOps =
+          case (op, rest) of
+            (OpBinary o, x : y : _) -> Just (3, do
+              a <- gen x
+              b <- gen y
+              pure ("(" <> a <> " " <> o <> " " <> b <> ")"))
+            (OpCall h, x : y : _) -> Just (3, do
+              a <- gen x
+              b <- gen y
+              pure (h <> "(" <> a <> ", " <> b <> ")"))
+            (OpUnary o, x : _) -> Just (2, do
+              a <- gen x
+              pure ("(" <> o <> "(" <> a <> "))"))
+            (OpValue v, _) -> Just (1, pure v)
+            _ -> Nothing
+      | mn == "Data.Int.Bits", x : y : _ <- args, Just _ <- bitOp fn "" "" = Just (2, do
+          a <- gen x
+          b <- gen y
+          maybe (error "bitOp") pure (bitOp fn a b))
+      | mn == "Data.Int.Bits", fn == "complement", x : _ <- args = Just (1, do
+          a <- gen x
+          pure ("_int32(~(" <> a <> "))"))
+      | mn == "Data.Array", fn == "unsafeIndex", CoreFn.Var {} : arr : i : _ <- args = Just (3, do
+          a <- gen arr
+          j <- gen i
+          pure ("(" <> a <> ")[" <> j <> "]"))
+      | mn == "Unsafe.Coerce", fn == "unsafeCoerce", x : _ <- args = Just (1, gen x)
+      | mn == "Control.Category", fn == "identity"
+      , CoreFn.Var _ (P.Qualified (P.ByModuleName (P.ModuleName "Control.Category")) (P.Ident "categoryFn")) : x : _ <- args =
+          Just (2, gen x)
+      where
+        gen = generateExpr env recNames
+        suffix pre = T.stripPrefix pre fn >>= readMaybe . T.unpack >>= \n ->
+          if n >= 0 && n <= (10 :: Int) then Just n else Nothing
+    inlineApp _ _ _ _ _ = Nothing
+
+    -- | @mkFnN (\a1 .. aN -> body)@ as an n-ary callable, when the argument
+    -- is a lambda chain at least N deep (purs's @collectArgs@). Lifted like
+    -- any lambda (liftAbs), with @_mk@ being functools.partial so the free
+    -- variables close over an n-ary def as well. @mkFn0@ takes the one
+    -- Unit-typed lambda, its parameter defaulting to None.
+    liftN :: Env -> [T.Text] -> Int -> CoreFn.Expr CoreFn.Ann -> (T.Text -> T.Text) -> Maybe (Gen T.Text)
+    liftN env recNames n f finish =
+      let (params, _) = peelAbs f
+          taken = max n 1
+          body = dropAbs taken f
+          names = uniquifyParams (map identName (take taken params))
+          decls = if n == 0 then map (<> "=None") names else names
+          free = Set.toAscList
+                   (Set.intersection
+                     (foldr Set.delete (collectLocalRefs currentModule body) names)
+                     env)
+          env' = Set.fromList (free ++ names)
+      in if length params < taken then Nothing else Just $ do
+        late <- getLate
+        if any (`Set.member` late) free
+          then do
+            bodyTxt <- withLate Set.empty (generateExpr (foldr Set.insert env names) recNames body)
+            pure ("(lambda " <> T.intercalate ", " decls <> ": " <> finish bodyTxt <> ")")
+          else do
+            bodyTxt <- generateExpr env' recNames body
+            name <- fresh
+            emitDef ("def " <> name <> "(" <> T.intercalate ", " (free ++ decls)
+                     <> "): return " <> finish bodyTxt)
+            pure $ if null free
+              then name
+              else "_mk(" <> name <> ", " <> T.intercalate ", " free <> ")"
+
+    dropAbs :: Int -> CoreFn.Expr CoreFn.Ann -> CoreFn.Expr CoreFn.Ann
+    dropAbs k (CoreFn.Abs _ _ b) | k > 0 = dropAbs (k - 1) b
+    dropAbs _ e = e
+
+    orElse :: Maybe a -> Maybe a -> Maybe a
+    orElse (Just x) _ = Just x
+    orElse Nothing y = y
 
     -- | Hoist a lambda to a module-level def, closing over its free
     -- local variables explicitly.

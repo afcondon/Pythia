@@ -19,6 +19,7 @@ module Language.PureScript.Python.CodeGen.Common
   , pyForeignFileName
   , toPythonIdent
   , identToPyName
+  , genPrefix
   , runIdent'
   , psStringToText
   , escapeStringPy
@@ -153,7 +154,19 @@ identToPyName ident =
      -- an underscore, since PureScript module components are capitalised).
      else if moduleAliasPrefix `T.isPrefixOf` name
      then moduleAliasPrefix <> "_" <> T.drop (T.length moduleAliasPrefix) name
+     -- The same for the generated-name namespace (`_ps_sat_f`, ADR-0004),
+     -- exactly as backend-py's pyIdent does it: `_ps_x` becomes `_ps__x`.
+     -- The two lanes share the foreign shims, so they must mangle alike.
+     else if genPrefix `T.isPrefixOf` name
+     then genPrefix <> "_" <> T.drop (T.length genPrefix) name
      else name
+
+-- | The prefix of every name the code generator invents for itself rather
+-- than takes from the program (the saturated defs of ADR-0004). A generated
+-- name is @_ps_@ followed by a letter; an escaped user identifier is @_ps_@
+-- followed by an underscore.
+genPrefix :: Text
+genPrefix = "_ps_"
 
 -- | Get the raw text from an Ident, handling internal identifiers
 runIdent' :: Ident -> Text
