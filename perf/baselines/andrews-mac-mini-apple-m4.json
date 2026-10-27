@@ -11,7 +11,7 @@
   "note": "Ratios, not milliseconds \u2014 see the header of run_perf.py. `rel` is steady/steady(calibration) within the same backend and run; `fs` is first/steady; `index` is the geometric mean of steady(backend)/steady(js) over `rows`, same run; `first_index` is sum(first) over sum(first on js) over its `rows`; `startup` is the median ms to first output. None of them transfers between machines, so this file speaks only for the machine named in `machine`.",
   "index": {
     "backend-py": {
-      "index": 2.497582,
+      "index": 2.476908,
       "rows": [
         "ffi-array@12800",
         "ffi-call@10000",
@@ -25,7 +25,7 @@
       ]
     },
     "py": {
-      "index": 16.813257,
+      "index": 12.638209,
       "rows": [
         "ffi-array@12800",
         "ffi-call@10000",
@@ -43,7 +43,7 @@
   },
   "first_index": {
     "backend-py": {
-      "index": 1.111128,
+      "index": 1.017022,
       "rows": [
         "ffi-array@100",
         "ffi-array@12800",
@@ -93,7 +93,7 @@
       ]
     },
     "py": {
-      "index": 17.201044,
+      "index": 13.905999,
       "rows": [
         "ffi-array@100",
         "ffi-array@12800",
@@ -145,828 +145,828 @@
   },
   "startup": {
     "backend-py": {
-      "ms": 18.8
+      "ms": 18.1
     },
     "js": {
-      "ms": 52.1
+      "ms": 56.0
     },
     "py": {
-      "ms": 27.5
+      "ms": 33.1
     }
   },
   "backends": {
     "backend-py": {
       "ffi-array@100": {
-        "rel": 0.000885,
-        "fs": 2.95,
+        "rel": 0.000933,
+        "fs": 3.65,
         "checksum": 5050,
         "gated": false
       },
       "ffi-array@400": {
-        "rel": 0.00312,
-        "fs": 1.19,
+        "rel": 0.003126,
+        "fs": 1.21,
         "checksum": 80200,
         "gated": false
       },
       "ffi-array@1600": {
-        "rel": 0.014579,
-        "fs": 1.1,
+        "rel": 0.014652,
+        "fs": 1.04,
         "checksum": 1280800,
         "gated": false
       },
       "ffi-array@12800": {
-        "rel": 0.127247,
-        "fs": 1.23,
+        "rel": 0.129625,
+        "fs": 1.21,
         "checksum": 81926400,
         "gated": true
       },
       "ffi-call@100": {
-        "rel": 0.011551,
-        "fs": 1.24,
+        "rel": 0.011619,
+        "fs": 1.31,
         "checksum": 100,
         "gated": false
       },
       "ffi-call@1000": {
-        "rel": 0.118491,
+        "rel": 0.122392,
         "fs": 1.01,
         "checksum": 1000,
         "gated": false
       },
       "ffi-call@10000": {
-        "rel": 1.227993,
+        "rel": 1.21483,
         "fs": 1.01,
         "checksum": 10000,
         "gated": true
       },
       "fold-array@10": {
-        "rel": 0.001397,
-        "fs": 1.8,
+        "rel": 0.001354,
+        "fs": 2.03,
         "checksum": 55,
         "gated": false
       },
       "fold-array@25": {
-        "rel": 0.002655,
-        "fs": 1.18,
-        "checksum": 325,
-        "gated": false
-      },
-      "fold-array@50": {
-        "rel": 0.004844,
-        "fs": 1.07,
-        "checksum": 1275,
-        "gated": false
-      },
-      "fold-array@100": {
-        "rel": 0.009222,
-        "fs": 1.06,
-        "checksum": 5050,
-        "gated": false
-      },
-      "fold-list@10": {
-        "rel": 0.002748,
-        "fs": 2.66,
-        "checksum": 55,
-        "gated": false
-      },
-      "fold-list@25": {
-        "rel": 0.00517,
+        "rel": 0.002706,
         "fs": 1.21,
         "checksum": 325,
         "gated": false
       },
-      "fold-list@50": {
-        "rel": 0.009874,
+      "fold-array@50": {
+        "rel": 0.004945,
+        "fs": 1.05,
+        "checksum": 1275,
+        "gated": false
+      },
+      "fold-array@100": {
+        "rel": 0.009425,
         "fs": 1.04,
+        "checksum": 5050,
+        "gated": false
+      },
+      "fold-list@10": {
+        "rel": 0.0028,
+        "fs": 2.77,
+        "checksum": 55,
+        "gated": false
+      },
+      "fold-list@25": {
+        "rel": 0.005272,
+        "fs": 1.14,
+        "checksum": 325,
+        "gated": false
+      },
+      "fold-list@50": {
+        "rel": 0.009752,
+        "fs": 1.07,
         "checksum": 1275,
         "gated": false
       },
       "fold-list@100": {
-        "rel": 0.018025,
-        "fs": 1.08,
+        "rel": 0.018618,
+        "fs": 1.04,
         "checksum": 5050,
         "gated": false
       },
       "loop-fore@100": {
-        "rel": 0.009269,
-        "fs": 1.28,
+        "rel": 0.009519,
+        "fs": 1.34,
         "checksum": 100,
         "gated": false
       },
       "loop-fore@1000": {
-        "rel": 0.097531,
+        "rel": 0.096962,
         "fs": 1.01,
         "checksum": 1000,
         "gated": false
       },
       "loop-fore@10000": {
         "rel": 1.0,
-        "fs": 1.0,
+        "fs": 1.01,
         "checksum": 10000,
         "gated": true
       },
       "loop-naive@10": {
-        "rel": 0.001724,
-        "fs": 2.19,
+        "rel": 0.00168,
+        "fs": 2.33,
         "checksum": 10,
         "gated": false
       },
       "loop-naive@20": {
-        "rel": 0.002748,
-        "fs": 1.05,
+        "rel": 0.0028,
+        "fs": 1.1,
         "checksum": 20,
         "gated": false
       },
       "loop-naive@40": {
-        "rel": 0.004937,
-        "fs": 1.07,
+        "rel": 0.005132,
+        "fs": 1.05,
         "checksum": 40,
         "gated": false
       },
       "loop-naive@80": {
-        "rel": 0.009549,
+        "rel": 0.009659,
         "fs": 1.05,
         "checksum": 80,
         "gated": false
       },
       "loop-naive@160": {
-        "rel": 0.018397,
-        "fs": 1.22,
+        "rel": 0.018758,
+        "fs": 1.28,
         "checksum": 160,
         "gated": false
       },
       "loop-null@100": {
-        "rel": 0.00666,
-        "fs": 1.44,
+        "rel": 0.006673,
+        "fs": 1.5,
         "checksum": 100,
         "gated": false
       },
       "loop-null@1000": {
-        "rel": 0.06204,
-        "fs": 1.03,
-        "checksum": 1000,
-        "gated": false
-      },
-      "loop-null@10000": {
-        "rel": 0.629064,
-        "fs": 1.01,
-        "checksum": 10000,
-        "gated": true
-      },
-      "loop-st@100": {
-        "rel": 0.009502,
-        "fs": 1.26,
-        "checksum": 100,
-        "gated": false
-      },
-      "loop-st@1000": {
-        "rel": 0.096973,
+        "rel": 0.063226,
         "fs": 1.02,
         "checksum": 1000,
         "gated": false
       },
-      "loop-st@10000": {
-        "rel": 0.999209,
+      "loop-null@10000": {
+        "rel": 0.629602,
+        "fs": 1.04,
+        "checksum": 10000,
+        "gated": true
+      },
+      "loop-st@100": {
+        "rel": 0.009659,
+        "fs": 1.42,
+        "checksum": 100,
+        "gated": false
+      },
+      "loop-st@1000": {
+        "rel": 0.097523,
         "fs": 1.01,
+        "checksum": 1000,
+        "gated": false
+      },
+      "loop-st@10000": {
+        "rel": 1.004946,
+        "fs": 1.0,
         "checksum": 10000,
         "gated": true
       },
       "loop-tailrec@100": {
-        "rel": 0.025431,
-        "fs": 1.23,
+        "rel": 0.025384,
+        "fs": 1.29,
         "checksum": 100,
         "gated": false
       },
       "loop-tailrec@1000": {
-        "rel": 0.253377,
-        "fs": 1.0,
+        "rel": 0.253045,
+        "fs": 1.02,
         "checksum": 1000,
         "gated": false
       },
       "loop-tailrec@10000": {
-        "rel": 2.555567,
+        "rel": 2.524475,
         "fs": 1.0,
         "checksum": 10000,
         "gated": true
       },
       "map-array@100": {
-        "rel": 0.012855,
-        "fs": 1.43,
+        "rel": 0.012646,
+        "fs": 1.86,
         "checksum": 5150,
         "gated": false
       },
       "map-array@400": {
-        "rel": 0.046717,
-        "fs": 1.12,
+        "rel": 0.046895,
+        "fs": 1.17,
         "checksum": 80600,
         "gated": false
       },
       "map-array@1600": {
-        "rel": 0.190265,
+        "rel": 0.190611,
         "fs": 1.05,
         "checksum": 1282400,
         "gated": true
       },
       "record-update@100": {
-        "rel": 0.017373,
-        "fs": 1.24,
+        "rel": 0.017171,
+        "fs": 1.33,
         "checksum": 100,
         "gated": false
       },
       "record-update@1000": {
-        "rel": 0.178528,
-        "fs": 1.02,
+        "rel": 0.1768,
+        "fs": 1.0,
         "checksum": 1000,
         "gated": false
       },
       "record-update@10000": {
-        "rel": 1.798231,
-        "fs": 1.0,
+        "rel": 1.770054,
+        "fs": 1.05,
         "checksum": 10000,
         "gated": true
       },
       "string-append@100": {
-        "rel": 0.012622,
-        "fs": 1.21,
+        "rel": 0.012833,
+        "fs": 1.25,
         "checksum": 100,
         "gated": false
       },
       "string-append@400": {
-        "rel": 0.048533,
-        "fs": 1.05,
+        "rel": 0.048809,
+        "fs": 1.09,
         "checksum": 400,
         "gated": false
       },
       "string-append@1600": {
-        "rel": 0.230601,
+        "rel": 0.237179,
         "fs": 1.01,
         "checksum": 1600,
         "gated": true
       },
       "string-join@100": {
-        "rel": 0.000978,
-        "fs": 3.71,
+        "rel": 0.000933,
+        "fs": 6.2,
         "checksum": 199,
         "gated": false
       },
       "string-join@400": {
-        "rel": 0.002143,
-        "fs": 1.41,
+        "rel": 0.002146,
+        "fs": 1.37,
         "checksum": 799,
         "gated": false
       },
       "string-join@1600": {
-        "rel": 0.006941,
-        "fs": 1.07,
+        "rel": 0.007046,
+        "fs": 1.08,
         "checksum": 3199,
         "gated": false
       },
       "string-join@12800": {
-        "rel": 0.053284,
-        "fs": 1.01,
+        "rel": 0.053521,
+        "fs": 1.06,
         "checksum": 25599,
         "gated": false
       }
     },
     "js": {
       "ffi-array@100": {
-        "rel": 0.001531,
-        "fs": 50.52,
+        "rel": 0.002244,
+        "fs": 34.38,
         "checksum": 5050,
         "gated": false
       },
       "ffi-array@400": {
-        "rel": 0.005103,
-        "fs": 1.06,
+        "rel": 0.007478,
+        "fs": 1.12,
         "checksum": 80200,
         "gated": false
       },
       "ffi-array@1600": {
-        "rel": 0.01888,
+        "rel": 0.028246,
         "fs": 1.04,
         "checksum": 1280800,
         "gated": false
       },
       "ffi-array@12800": {
-        "rel": 0.024889,
-        "fs": 6.02,
+        "rel": 0.025887,
+        "fs": 6.04,
         "checksum": 81926400,
         "gated": false
       },
       "ffi-call@100": {
-        "rel": 0.014117,
-        "fs": 4.34,
+        "rel": 0.014152,
+        "fs": 5.31,
         "checksum": 100,
         "gated": false
       },
       "ffi-call@1000": {
-        "rel": 0.105398,
-        "fs": 1.28,
+        "rel": 0.107288,
+        "fs": 1.27,
         "checksum": 1000,
         "gated": false
       },
       "ffi-call@10000": {
-        "rel": 0.961163,
-        "fs": 1.08,
+        "rel": 0.973308,
+        "fs": 1.17,
         "checksum": 10000,
         "gated": true
       },
       "fold-array@10": {
-        "rel": 0.00034,
-        "fs": 23.67,
+        "rel": 0.000287,
+        "fs": 36.46,
         "checksum": 55,
         "gated": false
       },
       "fold-array@25": {
-        "rel": 0.00034,
-        "fs": 2.0,
+        "rel": 0.000403,
+        "fs": 1.71,
         "checksum": 325,
         "gated": false
       },
       "fold-array@50": {
-        "rel": 0.00034,
-        "fs": 1.67,
+        "rel": 0.000345,
+        "fs": 1.5,
         "checksum": 1275,
         "gated": false
       },
       "fold-array@100": {
-        "rel": 0.000453,
-        "fs": 1.25,
+        "rel": 0.000403,
+        "fs": 1.28,
         "checksum": 5050,
         "gated": false
       },
       "fold-list@10": {
-        "rel": 0.001814,
-        "fs": 78.61,
+        "rel": 0.001898,
+        "fs": 80.76,
         "checksum": 55,
         "gated": false
       },
       "fold-list@25": {
-        "rel": 0.003458,
-        "fs": 1.23,
+        "rel": 0.003624,
+        "fs": 1.24,
         "checksum": 325,
         "gated": false
       },
       "fold-list@50": {
-        "rel": 0.0055,
-        "fs": 1.1,
+        "rel": 0.005695,
+        "fs": 1.12,
         "checksum": 1275,
         "gated": false
       },
       "fold-list@100": {
-        "rel": 0.010375,
-        "fs": 1.03,
+        "rel": 0.010528,
+        "fs": 1.05,
         "checksum": 5050,
         "gated": false
       },
       "loop-fore@100": {
-        "rel": 0.031693,
-        "fs": 3.31,
+        "rel": 0.031583,
+        "fs": 2.82,
         "checksum": 100,
         "gated": false
       },
       "loop-fore@1000": {
-        "rel": 0.184545,
-        "fs": 2.16,
+        "rel": 0.215268,
+        "fs": 1.86,
         "checksum": 1000,
         "gated": false
       },
       "loop-fore@10000": {
         "rel": 1.0,
-        "fs": 1.39,
+        "fs": 1.51,
         "checksum": 10000,
         "gated": true
       },
       "loop-naive@10": {
-        "rel": 0.004025,
-        "fs": 13.03,
+        "rel": 0.004027,
+        "fs": 13.97,
         "checksum": 10,
         "gated": false
       },
       "loop-naive@20": {
-        "rel": 0.006576,
-        "fs": 1.06,
+        "rel": 0.006961,
+        "fs": 1.27,
         "checksum": 20,
         "gated": false
       },
       "loop-naive@40": {
-        "rel": 0.013777,
-        "fs": 1.04,
+        "rel": 0.013807,
+        "fs": 1.06,
         "checksum": 40,
         "gated": false
       },
       "loop-naive@80": {
-        "rel": 0.027101,
-        "fs": 1.02,
+        "rel": 0.027786,
+        "fs": 1.0,
         "checksum": 80,
         "gated": false
       },
       "loop-naive@160": {
-        "rel": 0.054315,
-        "fs": 1.0,
+        "rel": 0.055112,
+        "fs": 1.35,
         "checksum": 160,
         "gated": false
       },
       "loop-null@100": {
-        "rel": 0.008107,
-        "fs": 4.18,
+        "rel": 0.008342,
+        "fs": 4.29,
         "checksum": 100,
         "gated": false
       },
       "loop-null@1000": {
-        "rel": 0.02557,
-        "fs": 2.91,
+        "rel": 0.030547,
+        "fs": 2.57,
         "checksum": 1000,
         "gated": false
       },
       "loop-null@10000": {
-        "rel": 0.126488,
-        "fs": 1.32,
+        "rel": 0.128343,
+        "fs": 1.52,
         "checksum": 10000,
         "gated": true
       },
       "loop-st@100": {
-        "rel": 0.028915,
-        "fs": 4.4,
+        "rel": 0.029454,
+        "fs": 4.62,
         "checksum": 100,
         "gated": false
       },
       "loop-st@1000": {
-        "rel": 0.128983,
-        "fs": 1.08,
+        "rel": 0.099695,
+        "fs": 1.44,
         "checksum": 1000,
         "gated": false
       },
       "loop-st@10000": {
-        "rel": 0.304456,
-        "fs": 1.5,
+        "rel": 0.284186,
+        "fs": 3.5,
         "checksum": 10000,
         "gated": true
       },
       "loop-tailrec@100": {
-        "rel": 0.062082,
-        "fs": 4.22,
+        "rel": 0.062647,
+        "fs": 3.99,
         "checksum": 100,
         "gated": false
       },
       "loop-tailrec@1000": {
-        "rel": 0.305931,
-        "fs": 2.3,
+        "rel": 0.350342,
+        "fs": 2.18,
         "checksum": 1000,
         "gated": false
       },
       "loop-tailrec@10000": {
-        "rel": 1.975619,
-        "fs": 1.53,
+        "rel": 2.033997,
+        "fs": 1.56,
         "checksum": 10000,
         "gated": true
       },
       "map-array@100": {
-        "rel": 0.012531,
-        "fs": 9.82,
+        "rel": 0.012886,
+        "fs": 13.85,
         "checksum": 5150,
         "gated": false
       },
       "map-array@400": {
-        "rel": 0.024663,
-        "fs": 1.93,
+        "rel": 0.025428,
+        "fs": 1.97,
         "checksum": 80600,
         "gated": false
       },
       "map-array@1600": {
-        "rel": 0.07807,
-        "fs": 1.49,
+        "rel": 0.090491,
+        "fs": 1.28,
         "checksum": 1282400,
         "gated": true
       },
       "record-update@100": {
-        "rel": 0.020693,
-        "fs": 5.12,
+        "rel": 0.020882,
+        "fs": 5.96,
         "checksum": 100,
         "gated": false
       },
       "record-update@1000": {
-        "rel": 0.132894,
-        "fs": 1.84,
+        "rel": 0.165047,
+        "fs": 1.22,
         "checksum": 1000,
         "gated": false
       },
       "record-update@10000": {
-        "rel": 1.039858,
-        "fs": 1.15,
+        "rel": 1.059541,
+        "fs": 1.19,
         "checksum": 10000,
         "gated": true
       },
       "string-append@100": {
-        "rel": 0.015705,
-        "fs": 2.95,
+        "rel": 0.01536,
+        "fs": 3.19,
         "checksum": 100,
         "gated": false
       },
       "string-append@400": {
-        "rel": 0.058226,
-        "fs": 1.0,
+        "rel": 0.057528,
+        "fs": 1.02,
         "checksum": 400,
         "gated": false
       },
       "string-append@1600": {
-        "rel": 0.207961,
-        "fs": 1.15,
+        "rel": 0.210608,
+        "fs": 1.6,
         "checksum": 1600,
         "gated": true
       },
       "string-join@100": {
-        "rel": 0.001531,
-        "fs": 37.37,
+        "rel": 0.001553,
+        "fs": 34.96,
         "checksum": 199,
         "gated": false
       },
       "string-join@400": {
-        "rel": 0.003742,
-        "fs": 1.24,
+        "rel": 0.003855,
+        "fs": 1.21,
         "checksum": 799,
         "gated": false
       },
       "string-join@1600": {
-        "rel": 0.012472,
+        "rel": 0.013174,
         "fs": 1.06,
         "checksum": 3199,
         "gated": false
       },
       "string-join@12800": {
-        "rel": 0.094739,
-        "fs": 1.08,
+        "rel": 0.098085,
+        "fs": 1.01,
         "checksum": 25599,
         "gated": true
       }
     },
     "py": {
       "ffi-array@100": {
-        "rel": 8e-05,
-        "fs": 2.37,
+        "rel": 9.3e-05,
+        "fs": 4.1,
         "checksum": 5050,
         "gated": false
       },
       "ffi-array@400": {
-        "rel": 0.000191,
-        "fs": 1.15,
+        "rel": 0.000242,
+        "fs": 1.38,
         "checksum": 80200,
         "gated": false
       },
       "ffi-array@1600": {
-        "rel": 0.00077,
-        "fs": 1.09,
+        "rel": 0.001019,
+        "fs": 1.12,
         "checksum": 1280800,
         "gated": false
       },
       "ffi-array@12800": {
-        "rel": 0.006328,
-        "fs": 1.21,
+        "rel": 0.008659,
+        "fs": 1.24,
         "checksum": 81926400,
         "gated": true
       },
       "ffi-call@100": {
-        "rel": 0.009646,
-        "fs": 1.06,
+        "rel": 0.009969,
+        "fs": 1.07,
         "checksum": 100,
         "gated": false
       },
       "ffi-call@1000": {
-        "rel": 0.095193,
-        "fs": 1.02,
+        "rel": 0.099342,
+        "fs": 1.01,
         "checksum": 1000,
         "gated": false
       },
       "ffi-call@10000": {
-        "rel": 0.955653,
-        "fs": 1.02,
+        "rel": 0.987299,
+        "fs": 1.03,
         "checksum": 10000,
         "gated": true
       },
       "fold-array@10": {
-        "rel": 0.000102,
-        "fs": 1.6,
+        "rel": 0.000127,
+        "fs": 2.0,
         "checksum": 55,
         "gated": false
       },
       "fold-array@25": {
-        "rel": 0.000164,
-        "fs": 1.24,
+        "rel": 0.000211,
+        "fs": 1.25,
         "checksum": 325,
         "gated": false
       },
       "fold-array@50": {
-        "rel": 0.000277,
-        "fs": 1.07,
+        "rel": 0.000356,
+        "fs": 1.1,
         "checksum": 1275,
         "gated": false
       },
       "fold-array@100": {
-        "rel": 0.000493,
-        "fs": 1.05,
+        "rel": 0.000657,
+        "fs": 1.06,
         "checksum": 5050,
         "gated": false
       },
       "fold-list@10": {
-        "rel": 0.000584,
-        "fs": 2.37,
+        "rel": 0.000545,
+        "fs": 2.6,
         "checksum": 55,
         "gated": false
       },
       "fold-list@25": {
-        "rel": 0.001195,
-        "fs": 1.06,
+        "rel": 0.001124,
+        "fs": 1.09,
         "checksum": 325,
         "gated": false
       },
       "fold-list@50": {
-        "rel": 0.002227,
+        "rel": 0.002109,
         "fs": 1.03,
         "checksum": 1275,
         "gated": false
       },
       "fold-list@100": {
-        "rel": 0.004314,
-        "fs": 1.01,
+        "rel": 0.004057,
+        "fs": 1.03,
         "checksum": 5050,
         "gated": true
       },
       "loop-fore@100": {
-        "rel": 0.010082,
+        "rel": 0.009932,
         "fs": 1.06,
         "checksum": 100,
         "gated": false
       },
       "loop-fore@1000": {
-        "rel": 0.100177,
-        "fs": 1.03,
+        "rel": 0.099166,
+        "fs": 1.01,
         "checksum": 1000,
         "gated": false
       },
       "loop-fore@10000": {
         "rel": 1.0,
-        "fs": 1.03,
+        "fs": 1.15,
         "checksum": 10000,
         "gated": true
       },
       "loop-naive@10": {
-        "rel": 0.002973,
-        "fs": 17.38,
+        "rel": 0.002645,
+        "fs": 3.8,
         "checksum": 10,
         "gated": false
       },
       "loop-naive@20": {
-        "rel": 0.005798,
-        "fs": 1.04,
+        "rel": 0.005184,
+        "fs": 1.07,
         "checksum": 20,
         "gated": false
       },
       "loop-naive@40": {
-        "rel": 0.011669,
-        "fs": 1.07,
+        "rel": 0.010514,
+        "fs": 1.06,
         "checksum": 40,
         "gated": false
       },
       "loop-naive@80": {
-        "rel": 0.02706,
-        "fs": 1.01,
+        "rel": 0.025281,
+        "fs": 1.0,
         "checksum": 80,
         "gated": false
       },
       "loop-naive@160": {
-        "rel": 0.054198,
-        "fs": 1.09,
+        "rel": 0.052888,
+        "fs": 1.03,
         "checksum": 160,
         "gated": true
       },
       "loop-null@100": {
-        "rel": 0.000557,
-        "fs": 1.36,
+        "rel": 0.000709,
+        "fs": 1.5,
         "checksum": 100,
         "gated": false
       },
       "loop-null@1000": {
-        "rel": 0.004893,
-        "fs": 1.0,
+        "rel": 0.006501,
+        "fs": 1.02,
         "checksum": 1000,
         "gated": false
       },
       "loop-null@10000": {
-        "rel": 0.048884,
-        "fs": 1.0,
+        "rel": 0.065656,
+        "fs": 1.01,
         "checksum": 10000,
         "gated": true
       },
       "loop-st@100": {
-        "rel": 0.004087,
-        "fs": 1.16,
+        "rel": 0.004196,
+        "fs": 1.23,
         "checksum": 100,
         "gated": false
       },
       "loop-st@1000": {
-        "rel": 0.040279,
-        "fs": 1.0,
+        "rel": 0.042002,
+        "fs": 1.02,
         "checksum": 1000,
         "gated": false
       },
       "loop-st@10000": {
-        "rel": 0.402246,
-        "fs": 1.0,
+        "rel": 0.40807,
+        "fs": 1.88,
         "checksum": 10000,
         "gated": true
       },
       "loop-tailrec@100": {
-        "rel": 0.029517,
-        "fs": 1.05,
+        "rel": 0.026928,
+        "fs": 1.08,
         "checksum": 100,
         "gated": false
       },
       "loop-tailrec@1000": {
-        "rel": 0.291054,
-        "fs": 1.0,
+        "rel": 0.271235,
+        "fs": 1.32,
         "checksum": 1000,
         "gated": false
       },
       "loop-tailrec@10000": {
-        "rel": 2.912373,
-        "fs": 1.0,
+        "rel": 2.718625,
+        "fs": 1.35,
         "checksum": 10000,
         "gated": true
       },
       "map-array@100": {
-        "rel": 0.00103,
-        "fs": 1.59,
+        "rel": 0.000886,
+        "fs": 2.99,
         "checksum": 5150,
         "gated": false
       },
       "map-array@400": {
-        "rel": 0.003884,
-        "fs": 1.06,
+        "rel": 0.003181,
+        "fs": 1.25,
         "checksum": 80600,
         "gated": false
       },
       "map-array@1600": {
-        "rel": 0.015492,
-        "fs": 1.02,
+        "rel": 0.012902,
+        "fs": 1.04,
         "checksum": 1282400,
         "gated": true
       },
       "record-update@100": {
-        "rel": 0.010926,
-        "fs": 1.06,
+        "rel": 0.011143,
+        "fs": 1.12,
         "checksum": 100,
         "gated": false
       },
       "record-update@1000": {
-        "rel": 0.109225,
-        "fs": 1.02,
+        "rel": 0.112365,
+        "fs": 1.0,
         "checksum": 1000,
         "gated": false
       },
       "record-update@10000": {
-        "rel": 1.092079,
-        "fs": 1.02,
+        "rel": 1.127779,
+        "fs": 1.22,
         "checksum": 10000,
         "gated": true
       },
       "string-append@100": {
-        "rel": 0.010314,
-        "fs": 1.03,
+        "rel": 0.010217,
+        "fs": 1.05,
         "checksum": 100,
         "gated": false
       },
       "string-append@400": {
-        "rel": 0.04055,
-        "fs": 1.03,
+        "rel": 0.039942,
+        "fs": 1.02,
         "checksum": 400,
         "gated": false
       },
       "string-append@1600": {
-        "rel": 0.164871,
-        "fs": 1.02,
+        "rel": 0.162918,
+        "fs": 1.03,
         "checksum": 1600,
         "gated": true
       },
       "string-join@100": {
-        "rel": 8e-05,
-        "fs": 4.57,
+        "rel": 9e-05,
+        "fs": 5.93,
         "checksum": 199,
         "gated": false
       },
       "string-join@400": {
-        "rel": 0.000141,
-        "fs": 1.32,
+        "rel": 0.000177,
+        "fs": 1.35,
         "checksum": 799,
         "gated": false
       },
       "string-join@1600": {
-        "rel": 0.000377,
-        "fs": 1.08,
+        "rel": 0.000499,
+        "fs": 1.09,
         "checksum": 3199,
         "gated": false
       },
       "string-join@12800": {
-        "rel": 0.002659,
-        "fs": 1.16,
+        "rel": 0.003645,
+        "fs": 1.22,
         "checksum": 25599,
         "gated": false
       }
