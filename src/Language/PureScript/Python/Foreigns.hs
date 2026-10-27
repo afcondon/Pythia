@@ -965,7 +965,10 @@ builtinForeigns =
       , "    def go(y):"
       , "        if x == 0 and y < 0:"
       , "            return 0  # JS: Math.pow(0, -n) = Infinity, ToInt32 -> 0"
-      , "        return _toInt32(float(x) ** float(y))"
+      , "        try:"
+      , "            return _toInt32(float(x) ** float(y))"
+      , "        except OverflowError:"
+      , "            return 0  # JS: Math.pow overflows to +/-Infinity, ToInt32 -> 0"
       , "    return go"
       ] )
   , ( "Data_Int_Bits_foreign.py", T.unlines
@@ -1034,8 +1037,11 @@ builtinForeigns =
       , "# capture the builtins before the PS foreign names shadow them"
       , "_max = max"
       , "_min = min"
-      , "def max(n1): return lambda n2: _max(n1, n2)"
-      , "def min(n1): return lambda n2: _min(n1, n2)"
+      -- Math.max/min return NaN if EITHER argument is NaN. Python's built-ins
+      -- keep whichever argument a false comparison leaves them holding, so
+      -- max(1.0, nan) was 1.0.
+      , "def max(n1): return lambda n2: n1 if n1 != n1 else (n2 if n2 != n2 else _max(n1, n2))"
+      , "def min(n1): return lambda n2: n1 if n1 != n1 else (n2 if n2 != n2 else _min(n1, n2))"
       -- ECMAScript Math.pow is NOT IEEE pow, and the ORDER of its rules is
       -- the whole of the difference: a zero exponent wins even over a NaN
       -- base, so `Math.pow(NaN, 0)` is 1 and not NaN. Testing NaN first got
