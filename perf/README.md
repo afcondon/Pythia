@@ -8,7 +8,8 @@ cost yesterday?*
 cd perf
 python3 run_perf.py                    # build, run, check
 python3 run_perf.py --skip-build --echo # re-run, streaming
-python3 run_perf.py --update-baseline   # re-record (say why in the commit)
+python3 run_perf.py --update-baseline   # re-record THIS machine's baseline
+                                        # (say why in the commit)
 ```
 
 ## What it is for
@@ -62,7 +63,8 @@ n=10000:
 | `rel` | steady(shape) / steady(calibration) — cost relative to a plain host loop on the same runtime |
 | `f/s` | first / steady — how much of the first call is compilation |
 
-Machine speed cancels, so the baseline is portable to CI. `f/s` is the
+Machine speed cancels within a run. It does not make the baseline portable
+between machines, which is the next section's subject. `f/s` is the
 type-nesting signal in one number: ~1 on a runtime that does not compile per
 call site, and large — and *staying* large as n grows — exactly where
 specialisation is happening.
@@ -137,6 +139,73 @@ Two consequences worth knowing:
 Tighten toward the 90th percentile once a few weeks of CI runs say what the
 tail really looks like; six samples underestimate it.
 
+## The speed index, and a baseline per machine (2026-10-27)
+
+Two holes, both found in the October review (`REVIEW-2026-10.md`, X3 c and e).
+
+**A uniform change was invisible.** Every `rel` is divided by the same run's
+`loop-fore`, which this backend also compiles. A code-generator change that
+makes every shape 20 % faster makes the calibration 20 % faster too, and every
+ratio stays put. That is what Pythia#3 (`functools.partial` for `_mk`) did:
+about −20 % on every closure-heavy shape, and the gate said nothing.
+
+So each backend now also gets a **speed index** per run: the geometric mean,
+over its gated shapes, of `steady(backend) / steady(js)` for the same shape in
+the same run. The JS reference is compiled by `purs`, which nothing in this
+repo changes, so a uniform change here moves the index by its own size. The
+mean over about ten shapes is also much quieter than any one ratio, which is
+what lets the tolerance be tight (`INDEX_TOLERANCE = 1.10`).
+
+Each run measures every backend three times, interleaved by round (`js`,
+`py`, `backend-py`, `js`, …), and uses the per-shape median (`--repeat`,
+default 3). Interleaving matters as much as the median: a shift in machine
+load during the run lands on the numerator and the denominator alike.
+
+Noise on the Mac Mini M4, which is never idle (other sessions build there):
+
+| runs | `py` index vs baseline | `backend-py` index vs baseline |
+|---|---|---|
+| 10 single runs, light load | 16.95–18.07 (spread 1.066×) | 2.55–2.74 (spread 1.072×) |
+| 6 runs at `--repeat 3`, heavy load | 0.944–1.038× | 0.925–1.004× |
+
+Pythia#3 replayed through the gate, against the same machine's baseline:
+
+| runs | `py` index vs baseline | verdict |
+|---|---|---|
+| 3 single runs | 0.887×, 0.887×, 0.865× | MOVED, gate fails |
+| 3 runs at `--repeat 3`, heavy load | 0.837×, 0.854×, 0.898× | MOVED, gate fails |
+
+The per-shape check on every one of those runs said "no shape moved more than
+2.0x". `backend-py` stayed inside the tolerance (0.92–1.01×), as it should:
+the change is in purepy's runtime prelude.
+
+So `INDEX_TOLERANCE = 1.10` separates the two on this machine, but under
+heavy load the margin is a few percent, not a comfortable one. The runner
+therefore prints each round's own index and its spread. That is the run's
+noise, measured rather than assumed. When the spread is wider than the
+tolerance, the verdict is labelled **NOISY**: that run cannot vouch for it,
+and it should be re-run on a quieter machine. A change smaller than about
+10 % is below what this gate can see on the Mini; say so rather than claim it.
+
+**The baseline did not transfer.** The ratios were meant to be
+machine-independent. The first run on GitHub's x86 runners put gated JS
+ratios at 2.17× and 0.38× of the M4 baseline with nothing changed, and the
+index is a cross-runtime ratio, which is even less likely to transfer: V8
+and CPython do not speed up together across CPUs. So a baseline belongs to
+the machine that recorded it: `baselines/<host>-<cpu>.json`, chosen by
+`machine_id()` in `run_perf.py`. On a machine with none, the drift gate says
+**NOT RUN**, naming the machine and the baselines that do exist, in the log
+and as a GitHub annotation. Every CI runner is such a machine, because its
+host name is fresh on each run. Checksums gate everywhere.
+
+The M4 MBP's old `baseline.json` is gone: it could not say which machine it
+spoke for. Record one there with `--update-baseline` to gate on the MBP.
+
+**The optimizer lane is in the canary.** `backend-py` compiles its own code,
+so it gets its own index, ratios and checksums. It runs whenever
+`../purescript-backend-optimizer` is checked out, and says NOT RUN when it is
+not, which is every CI runner today.
+
 A shape that does not complete is recorded as **DNF** rather than crashing
 the lane — see below for why that is a normal outcome here.
 
@@ -188,7 +257,7 @@ Jurist's first run; they cost nothing here and the corpus is shared.
 | `src/Bench/Clock.purs` | the one foreign: a monotonic clock, a stdout flush, and the two FFI probes |
 | `src/Bench/Clock.js`, `ffi-py/Bench_Clock_foreign.py` | its implementations |
 | `run_perf.py` | build, run, derive ratios, compare — **per-backend** |
-| `baseline.json` | recorded ratios and checksums |
+| `baselines/<machine>.json` | one machine's recorded ratios, speed indices and checksums |
 
 `src/Bench/Shapes.purs` and `src/Bench/Main.purs` are byte-identical to the
 copies in `purescript-julia/perf/` and `purescript-go/perf/`; `md5` them

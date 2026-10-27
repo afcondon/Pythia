@@ -13,9 +13,9 @@ backends and diffs their TEST lines:
     TEST <name>: <value>
 
 A test passes when the JS backend (the reference semantics) and the
-Python backend print byte-identical values. Divergences listed in
-KNOWN_DIVERGENCES are reported but don't fail the run; they document
-deliberate representation differences.
+Python backend print byte-identical values, or when it is an entry of
+divergences.json and both print exactly the values recorded there (see
+ledger.py). A ledger entry that stops being true fails the run as STALE.
 
 Expected generated layout (the spec the new compiler compiles to):
     output-py/<Module_Name>.py     one module per PS module,
@@ -33,10 +33,11 @@ Exit code: 0 iff no unexpected divergences and no module-level errors.
 """
 
 import argparse
-import re
 import subprocess
 import sys
 from pathlib import Path
+
+import ledger
 
 HERE = Path(__file__).resolve().parent
 
@@ -72,77 +73,11 @@ def discover_test_modules():
 
 TEST_MODULES = discover_test_modules()
 
-# Deliberate divergences (module, test-name), to be confirmed against the
-# UTF16-STRING-AUDIT and recorded in the README as they are ratified:
-# - ASTRAL-: JS counts UTF-16 code units; Python strings are sequences of
-#   codepoints (same divergence Jurist has). Identical for BMP text.
-# - INT64-: JS wraps every Int operation to int32 (`|0`); Python ints are
-#   arbitrary precision. The JS values here are OVERFLOWED.
-KNOWN_DIVERGENCES = {
-    ("Test.Strings", "ASTRAL-cu-length-emoji"),
-    ("Test.Strings", "ASTRAL-cu-take-emoji"),
-    ("Test.Recursion", "INT64-sumTo-1e6"),
-    ("Test.Recursion", "INT64-fact-20"),
-    # STACK-: JS captures a stack when an Error is CONSTRUCTED; Python attaches
-    # a traceback only once an exception has actually been raised. `Maybe` is
-    # the honest type for this, and both answers are correct for their runtime.
-    ("Test.Exceptions", "STACK-present-on-construction"),
-    # ---- Test.Boundaries -------------------------------------------
-    # The boundary tables are a systematic enumeration, so unlike the
-    # rest of the corpus they are EXPECTED to turn up divergences: that
-    # is what they are for. Each one below has been triaged to a cause,
-    # and anything that turned out to be a bug was fixed rather than
-    # listed -- nine of them were, including three crashes.
-    #
-    # INT32: JS wraps every Int operation to int32 (`|0`); these
-    # backends run wider arithmetic, so the JS values here are the
-    # OVERFLOWED ones. `topInt`/`bottomInt` are `foreign import`s that
-    # every backend chooses, and all three copied JS's while running
-    # wider arithmetic underneath -- which is the whole of the
-    # incoherence, and Gate C9's to settle.
-    ("Test.Boundaries", "INT64-int-top-plus-1"),
-    ("Test.Boundaries", "INT64-int-bottom-minus-1"),
-    ("Test.Boundaries", "INT64-int-negate-bottom"),
-    ("Test.Boundaries", "INT64-int-abs-bottom"),
-    ("Test.Boundaries", "INT64-int-negate-bottom-gt-top"),
-    ("Test.Boundaries", "INT64-int-top-times-2"),
-    ("Test.Boundaries", "INT64-int-bottom-times-2"),
-    ("Test.Boundaries", "INT64-int-top-plus-top"),
-    ("Test.Boundaries", "INT64-int-top-times-top"),
-    ("Test.Boundaries", "INT64-int-quot-bottom-by-neg1"),
-    ("Test.Boundaries", "INT64-int-lcm-top-top"),
-    # REM0: `Int.rem x 0` is NaN on JS -- a value that is not an Int at
-    # all. No backend with a real integer type can reproduce it; all
-    # three answer 0.
-    ("Test.Boundaries", "INT64-int-rem-zero"),
-    # NEGZERO: `purs`'s JS backend INLINES `Data.Ring.negate` to unary
-    # minus, so `-0.0` there is a genuine negative zero. `negate` is not
-    # a class member -- it is `negate a = zero - a` in the Prelude -- so
-    # a faithful CoreFn lowering computes `0.0 - 0.0`, which IEEE says
-    # is POSITIVE zero. Everything below follows from that one
-    # difference, and the sign of a zero is observable through `1/x`,
-    # `atan2`, `min`/`max` and `pow`. Not a shim bug: there is no shim
-    # to fix. Closing it means matching the inliner in each codegen.
-    ("Test.Boundaries", "num-sign-of-negzero"),
-    ("Test.Boundaries", "num-sign-of-negzero-plus-negzero"),
-    ("Test.Boundaries", "num-sign-of-sqrt-negzero"),
-    ("Test.Boundaries", "NEGZERO-num-min-zeros"),
-    ("Test.Boundaries", "num-pow-negzero-neg1"),
-    ("Test.Boundaries", "num-atan2-zero-negzero"),
-    # ASTRAL: JS counts UTF-16 code units; these backends count
-    # codepoints. Identical for BMP text.
-    ("Test.Boundaries", "char-astral-length"),
-    ("Test.Boundaries", "char-astral-take-1"),
-    ("Test.Boundaries", "char-astral-take-2"),
-    # NEGZERO, in a real library: `perturbGen` folds float32ToInt32's bit
-    # pattern into QuickCheck's seed, and the sign bit of -0.0 is part of that
-    # pattern. So the sign of a zero changes WHICH TEST CASES QuickCheck
-    # generates. Same single cause as the Test.Boundaries NEGZERO block (#48);
-    # this is what it costs downstream.
-    ("Test.NullableRandom", "NEGZERO-perturb-neg-zero"),
-}
+# Deliberate divergences live in divergences.json, with BOTH values and a
+# cause, and are judged by ledger.py -- the same judge the optimizer lane uses.
+# A name alone used to be enough to pass a ledgered test whatever it printed.
+LEDGER = ledger.load("purepy")
 
-TEST_LINE = re.compile(r"^TEST ([^:]+): (.*)$")
 
 
 def sh(cmd, **kw):
@@ -205,17 +140,6 @@ def run_python(module):
     return r.stdout, None
 
 
-def parse_tests(stdout):
-    tests = {}
-    order = []
-    for line in stdout.splitlines():
-        m = TEST_LINE.match(line)
-        if m:
-            tests[m.group(1)] = m.group(2)
-            order.append(m.group(1))
-    return tests, order
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("filter", nargs="?", default="")
@@ -227,7 +151,7 @@ def main():
 
     modules = [m for m in TEST_MODULES if args.filter.lower() in m.lower()]
     total = passed = known = 0
-    failures = []
+    bad = []
     errors = []
 
     for mod in modules:
@@ -237,36 +161,29 @@ def main():
             errors.append((mod, js_err or py_err))
             print(f"{mod}: ERROR {js_err or py_err}", file=sys.stderr)
             continue
-        js_tests, js_order = parse_tests(js_out)
-        py_tests, _ = parse_tests(py_out)
-        mod_pass = mod_fail = 0
-        for name in js_order:
-            total += 1
-            jsv = js_tests.get(name)
-            pyv = py_tests.get(name)
-            if jsv == pyv:
-                passed += 1
-                mod_pass += 1
-            elif (mod, name) in KNOWN_DIVERGENCES:
-                known += 1
-                print(f"  KNOWN  {mod}/{name}: js={jsv!r} python={pyv!r}",
-                      file=sys.stderr)
-            else:
-                mod_fail += 1
-                failures.append((mod, name, jsv, pyv))
-                print(f"  FAIL   {mod}/{name}: js={jsv!r} python={pyv!r}",
-                      file=sys.stderr)
-        missing = set(js_tests) - set(py_tests)
-        extra = set(py_tests) - set(js_tests)
-        if missing or extra:
-            errors.append((mod, f"line mismatch missing={missing} extra={extra}"))
-        print(f"{mod}: {mod_pass} pass, {mod_fail} fail", file=sys.stderr)
+        v = LEDGER.judge(mod, js_out, py_out)
+        for line in v.lines("python"):
+            print(line, file=sys.stderr)
+        total += v.total
+        passed += v.identical
+        known += len(v.known)
+        if not v.ok:
+            bad.append(mod)
+        print(f"{mod}: {v.identical} identical, {len(v.known)} ledgered, "
+              f"{len(v.fail) + len(v.mismatch)} fail"
+              + (f", {len(v.stale)} stale" if v.stale else ""), file=sys.stderr)
 
-    print(f"\n{passed}/{total} identical, {known} known divergences, "
-          f"{len(failures)} failures, {len(errors)} module errors",
-          file=sys.stderr)
-    sys.exit(0 if not failures and not errors else 1)
+    # Only a full run can say an entry's module has left the corpus.
+    if not args.filter:
+        for m, t in LEDGER.unvisited(TEST_MODULES):
+            bad.append(m)
+            print(f"  STALE     {m}/{t}: module is not in the corpus"
+                  f" — remove it from divergences.json", file=sys.stderr)
 
+    print(f"\n{passed}/{total} identical, {known} known divergences "
+          f"(values checked), {len(bad)} modules failing, "
+          f"{len(errors)} module errors", file=sys.stderr)
+    sys.exit(0 if not bad and not errors else 1)
 
 if __name__ == "__main__":
     main()
