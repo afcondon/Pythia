@@ -205,7 +205,12 @@ the seam is where the value is.
 **Representation** ([ADR-0002](docs/design-decisions/0002-expression-emission-lambda-lifting.md)):
 - **ADTs:** tag-tuples, `("Just", x)`.
 - **Records and dictionaries:** `dict`.
-- **Functions:** curried unary closures.
+- **Functions:** a function value is a curried unary closure. A known-arity
+  top-level function also has an n-ary `def _ps_sat_<name>`, and a call with
+  enough arguments goes straight to it; `purepy` also inlines purs's JS
+  inliner set (`runFnN`, primitive ops through a known dictionary,
+  saturated constructors)
+  ([ADR-0004](docs/design-decisions/0004-saturated-calls-and-inliner.md)).
 - **`Effect`:** a zero-argument thunk.
 - **Lambdas:** every lambda is hoisted to a module-level `def` with its free
   variables passed explicitly, because CPython caps paren nesting.

@@ -6,9 +6,15 @@
 ## Context
 
 The reboot (0001) transplants Jurist's expression-oriented emitter: every
-CoreFn expression compiles to one Python expression — curried unary
-lambdas, ternary chains for case alternatives, walrus-in-tuple IIFEs for
-let-scoping, tag-tuples for ADTs. The first run proved the approach (72/72
+CoreFn expression compiles to one Python expression — ~~curried unary
+lambdas~~ curried unary lambdas as function *values*, ternary chains for case alternatives, walrus-in-tuple IIFEs for
+let-scoping, tag-tuples for ADTs.
+
+> **Superseded in part (2026-10-27):** a call of a known-arity top-level
+> function with enough arguments is no longer a curried spine; it is a call of
+> that function's n-ary def. See [0004](0004-saturated-calls-and-inliner.md).
+
+The first run proved the approach (72/72
 identical on the modules that parsed) and exposed the Python-specific
 wall: **CPython's tokenizer caps parenthesis nesting at ~200 and
 indentation at 100 levels.** A monadic do-block nests its continuation
